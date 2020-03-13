@@ -9,7 +9,11 @@ import numpy as np
 from astropy.io import fits
 from astropy.time import Time
 from astropy import constants as const
+
 from pyuvdata.data import DATA_PATH
+
+from scipy.optimize import root, minimize
+from scipy.special import erf
 
 from .. import _corr_fits
 
@@ -29,6 +33,120 @@ def input_output_mapping():
     # floor(index/4) + index%4 * 16 = input
     # for the first 64 outputs, pfb_mapper[output] = input
     return _corr_fits.input_output_mapping()
+
+
+def sighat_vector(x, bits):
+    """
+    Generate quantized sigma from a given sigma input.
+
+    Parameters
+    ----------
+    x : numpy array
+        Array of sigma inputs into the inverse correction function.
+    bits : int
+        Number of quantization bits.
+    """
+    # assign the upper level of the quantization
+    m = 2 ** (bits - 1) - 1
+    # create an array
+    y = np.array([range(m)])
+    # create a sparse array to perform the function accross
+    xx, yy = np.meshgrid(x, y, sparse=True)
+    # compute terms of summation
+    z = (2 * yy + 1) * erf((yy + 0.5) / (xx * np.sqrt(2)))
+    # sum terms
+    z = z.sum(axis=0)
+    # create a new array that is the standard deviation of the quantized signal
+    sighat = np.sqrt(m ** 2 - z)
+    return sighat
+
+
+def autos_opt_func(x, sighat):
+    return sighat_vector(x, 4) - sighat
+
+
+def corrcorrect_vect(rho, bits, xsig, ysig):
+    """Generate quantized covariance from correlation and sigma inputs."""
+    # create an integration grid for midpoint summation
+    x = np.array([np.arange(i / (2 * 10000), i, i / 10000) for i in rho])
+    x = np.transpose(x)
+    # assign the upper level of the quantization
+    m = 2 ** (bits - 1) - 1
+    # create variable for summation
+    i = np.arange(0, m, 1)
+    ii = np.reshape(i, (1, len(i), 1, 1))
+    kk = np.reshape(i, (len(i), 1, 1, 1))
+    xx = np.reshape(x, (1, 1, x.shape[0], x.shape[1]))
+    # set up summation in integrand
+    z = (1 / (np.pi * np.sqrt(1 - xx ** 2))) * (
+        np.exp(
+            -(1 / (2 * (1 - xx ** 2)))
+            * (
+                ((ii + 0.5) ** 2 / xsig ** 2)
+                + ((kk + 0.5) ** 2 / ysig ** 2)
+                - 2 * xx * (ii + 0.5) * (kk + 0.5) / (xsig * ysig)
+            )
+        )
+        + np.exp(
+            -(1 / (2 * (1 - xx ** 2)))
+            * (
+                ((ii + 0.5) ** 2 / xsig ** 2)
+                + ((kk + 0.5) ** 2 / ysig ** 2)
+                + 2 * xx * (ii + 0.5) * (kk + 0.5) / (xsig * ysig)
+            )
+        )
+    )
+    # sum over integration variable
+    z = z.sum(2)
+    # sum over i
+    z = z.sum(0)
+    # sum over k
+    z = z.sum(0)
+    # multiply by width for midpoint Riemann sum
+    result = z * rho / 10000
+    return result
+
+
+def corrcorrect_vect_prime(rho, bits, xsig, ysig):
+    # assign the upper level of the quantization
+    m = 2 ** (bits - 1) - 1
+    # create variables for summation
+    i = np.arange(0, m, 1)
+    ii, kk, xx = np.meshgrid(i, i, rho, sparse=True)
+    # set up summation
+    z = (1 / (np.pi * np.sqrt(1 - xx ** 2))) * (
+        np.exp(
+            -(1 / (2 * (1 - xx ** 2)))
+            * (
+                ((ii + 0.5) ** 2 / xsig ** 2)
+                + ((kk + 0.5) ** 2 / ysig ** 2)
+                - 2 * xx * (ii + 0.5) * (kk + 0.5) / (xsig * ysig)
+            )
+        )
+        + np.exp(
+            -(1 / (2 * (1 - xx ** 2)))
+            * (
+                ((ii + 0.5) ** 2 / xsig ** 2)
+                + ((kk + 0.5) ** 2 / ysig ** 2)
+                + 2 * xx * (ii + 0.5) * (kk + 0.5) / (xsig * ysig)
+            )
+        )
+    )
+    # sum over i
+    z = z.sum(0)
+    # sum over k
+    z = z.sum(0)
+    return z
+
+
+def corr_least_squares(x, kaphat, sig1, sig2):
+    return np.sum((corrcorrect_vect(x, 4, sig1, sig2) - kaphat) ** 2)
+
+
+def corr_least_squares_prime(x, kaphat, sig1, sig2):
+    return (corrcorrect_vect(x, 4, sig1, sig2) - kaphat) * corrcorrect_vect_prime(
+        x, 4, sig2, sig2
+    )
 
 
 class MWACorrFITS(UVData):
@@ -202,6 +320,122 @@ class MWACorrFITS(UVData):
                 ] = 1.0
                 self.flag_array[time_ind, :, file_nums_to_index[file_num], :] = False
         return
+    def van_vleck_correction(self):
+        """Apply a van vleck correction to the data array."""
+        # get indices for autos
+        autos = np.where(
+            self.ant_1_array[0 : self.Nbls] == self.ant_2_array[0 : self.Nbls]
+        )[0]
+        # get indices for crosses
+        crosses = np.where(
+            self.ant_1_array[0 : self.Nbls] != self.ant_2_array[0 : self.Nbls]
+        )[0]
+        # generate dict for getting auto pols
+        # polarizations are ordered yy, yx, xy, xx
+        # TODO: generalize this for any polarization ordering
+        pol_dict = {0: (0, 0), 1: (0, 3), 2: (3, 0), 3: (3, 3)}
+
+        # correct xx and yy autos
+        pols = [0, 3]
+        # combine axes for speed-up
+        self.data_array = self.data_array.reshape(
+            (self.Nbls, self.Nfreqs * self.Ntimes, self.Npols)
+        )
+        for i in pols:
+            # take square root of xx, yy autos
+            self.data_array.real[autos, :, i] = np.sqrt(
+                self.data_array.real[autos, :, i]
+            )
+            for k in autos:
+                # TODO: think about correcting zeros
+                # so one weird thing is at low sigma things get rounded up to 0.06
+                # don't correct zeros?
+                zero_inds = np.where(self.data_array.real[k, :, i] != 0.0)[0]
+                sighat_array = self.data_array.real[k, zero_inds, i]
+                # get correction
+                result = root(
+                    autos_opt_func,
+                    x0=sighat_array,
+                    args=(sighat_array,),
+                    method="broyden1",
+                    tol=1e-10,
+                )
+                self.data_array.real[k, zero_inds, i] = result["x"]
+
+        # correct everything else
+        pols = [0, 1, 2, 3]
+        # combining the time and frequency arrays makes the correction too large
+        self.data_array = self.data_array.reshape(
+            (self.Nbls, self.Ntimes, self.Nfreqs, self.Npols)
+        )
+        for i in pols:
+            # look up auto pol inds
+            pol_inds = pol_dict[i]
+            if i == 1 or i == 2:
+                # need to correct xy and yx autos as well as crosses
+                bls = np.arange(self.Nbls)
+            else:
+                bls = crosses
+            for k in bls:
+                auto1 = autos[self.ant_1_array[k]]
+                auto2 = autos[self.ant_2_array[k]]
+                for j in range(self.Nfreqs):
+                    # correct real
+                    zero_inds = np.where(self.data_array.real[k, :, j, i] != 0.0)[0]
+                    neg_inds = np.where(self.data_array.real[k, zero_inds, j, i] < 0.0)[
+                        0
+                    ]
+                    kaphat_array = np.abs(self.data_array.real[k, zero_inds, j, i])
+                    if len(kaphat_array) > 0:
+                        sig_array1 = self.data_array.real[
+                            auto1, zero_inds, j, pol_inds[0]
+                        ]
+                        sig_array2 = self.data_array.real[
+                            auto2, zero_inds, j, pol_inds[1]
+                        ]
+                        # generate initial guess
+                        x0 = kaphat_array / (sig_array1 * sig_array2)
+                        result = minimize(
+                            corr_least_squares,
+                            jac=corr_least_squares_prime,
+                            x0=x0,
+                            args=(kaphat_array, sig_array1, sig_array2),
+                            tol=1e-8,
+                            method="CG",
+                        )
+                        result["x"][neg_inds] = np.negative(result["x"][neg_inds])
+                        self.data_array.real[k, zero_inds, j, i] = (
+                            result["x"] * sig_array1 * sig_array2
+                        )
+                    # correct imaginary
+                    zero_inds = np.where(self.data_array.imag[k, :, j, i] != 0.0)[0]
+                    neg_inds = np.where(self.data_array.imag[k, zero_inds, j, i] < 0.0)[
+                        0
+                    ]
+                    kaphat_array = np.abs(self.data_array.imag[k, zero_inds, j, i])
+                    if len(kaphat_array) > 0:
+                        sig_array1 = self.data_array.real[
+                            auto1, zero_inds, j, pol_inds[0]
+                        ]
+                        sig_array2 = self.data_array.real[
+                            auto2, zero_inds, j, pol_inds[1]
+                        ]
+                        x0 = kaphat_array / (sig_array1 * sig_array2)
+                        result = minimize(
+                            corr_least_squares,
+                            jac=corr_least_squares_prime,
+                            x0=x0,
+                            args=(kaphat_array, sig_array1, sig_array2),
+                            tol=1e-8,
+                            method="CG",
+                        )
+                        result["x"][neg_inds] = np.negative(result["x"][neg_inds])
+                        self.data_array.imag[k, zero_inds, j, i] = (
+                            result["x"] * sig_array1 * sig_array2
+                        )
+        # square autos
+        self.data_array.real[autos, :, :, 0] = self.data_array.real[autos, :, :, 0] ** 2
+        self.data_array.real[autos, :, :, 1] = self.data_array.real[autos, :, :, 1] ** 2
 
     def read_mwa_corr_fits(
         self,
@@ -210,6 +444,7 @@ class MWACorrFITS(UVData):
         remove_dig_gains=True,
         remove_coarse_band=True,
         correct_cable_len=False,
+        correct_van_vleck=False,
         phase_to_pointing_center=False,
         propagate_coarse_flags=True,
         flag_init=True,
@@ -257,6 +492,8 @@ class MWACorrFITS(UVData):
             Option to divide out coarse band shape.
         correct_cable_len : bool
             Option to apply a cable delay correction.
+        correct_van_vleck : bool
+            Option to apply a van vleck correction.
         phase_to_pointing_center : bool
             Option to phase to the observation pointing center.
         propagate_coarse_flags : bool
@@ -330,6 +567,7 @@ class MWACorrFITS(UVData):
         metafits_file = None
         ppds_file = None
         obs_id = None
+        bscale = None
         file_dict = {}
         start_time = 0.0
         end_time = 0.0
@@ -399,6 +637,7 @@ class MWACorrFITS(UVData):
                         raise ValueError(
                             "files submitted have different fine channel widths"
                         )
+
                     # get the file number from the file name;
                     # this will later be mapped to a coarse channel
                     file_num = int(file.split("_")[-2][-2:])
@@ -409,6 +648,17 @@ class MWACorrFITS(UVData):
                         file_dict["data"] = [file]
                     else:
                         file_dict["data"].append(file)
+
+                    # get scaling info
+                    if bscale is None:
+                        if "BSCALE" in headstart.keys():
+                            bscale = headstart["BSCALE"]
+                            self.extra_keywords["BSCALE"] = headstart["BSCALE"]
+                        else:
+                            # correlator did a divide by 4 before october 2014
+                            bscale = 0.25
+                            self.extra_keywords["BSCALE"] = 0.25
+
             # look for flag files
             elif file.lower().endswith(".mwaf"):
                 if use_cotter_flags is None:
@@ -759,6 +1009,25 @@ class MWACorrFITS(UVData):
             self.nsample_array = self.nsample_array.reshape(
                 (self.Nblts, self.Nfreqs, self.Npols)
             )
+
+            # van vleck correction
+            if correct_van_vleck:
+                # scale the data
+                # number of samples per fine channel is equal to channel width (Hz)
+                nsamples = self.channel_width * self.integration_time[0]
+                # cast data to ints
+                self.data_array = np.rint(self.data_array / bscale)
+                # take advantage of cicular polarization! divide by two
+                self.data_array = self.data_array / nsamples
+                self.data_array = self.data_array / 2.0
+                # do some convenient reshaping
+                self.data_array = np.swapaxes(self.data_array, 0, 1)
+                # self.data_array = np.around(self.data_array, round_factor)
+                self.van_vleck_correction()
+                # reshape the data
+                self.data_array = np.swapaxes(self.data_array, 0, 1)
+                # rescale the data
+                self.data_array = self.data_array * (nsamples * bscale * 2)
 
             # divide out digital gains
             if remove_dig_gains:

@@ -6408,6 +6408,7 @@ class UVData(UVBase):
         remove_dig_gains=True,
         remove_coarse_band=True,
         correct_cable_len=False,
+        correct_van_vleck=False,
         propagate_coarse_flags=True,
         flag_init=True,
         edge_width=80e3,
@@ -6454,6 +6455,8 @@ class UVData(UVBase):
             Option to divide out coarse band shape.
         correct_cable_len : bool
             Option to apply a cable delay correction.
+        correct_van_vleck : bool
+            Option to apply a van vleck correction.
         propagate_coarse_flags : bool
             Option to propagate flags for missing coarse channel integrations
             across frequency.
@@ -6540,6 +6543,7 @@ class UVData(UVBase):
             remove_dig_gains=remove_dig_gains,
             remove_coarse_band=remove_coarse_band,
             correct_cable_len=correct_cable_len,
+            correct_van_vleck=correct_van_vleck,
             propagate_coarse_flags=propagate_coarse_flags,
             flag_init=flag_init,
             edge_width=edge_width,
@@ -6925,6 +6929,7 @@ class UVData(UVBase):
         remove_dig_gains=True,
         remove_coarse_band=True,
         correct_cable_len=False,
+        correct_van_vleck=False,
         propagate_coarse_flags=True,
         flag_init=True,
         edge_width=80e3,
@@ -7094,6 +7099,9 @@ class UVData(UVBase):
             band shape.
         correct_cable_len : bool
             Flag to apply cable length correction. Only used if file_type is
+            'mwa_corr_fits'.
+        correct_van_vleck : bool
+            Flag to apply a van vleck correction. Only used if file_type is
             'mwa_corr_fits'.
         propogate_coarse_flags : bool
             Option to propogate flags for missing coarse channel integrations
@@ -7578,6 +7586,7 @@ class UVData(UVBase):
                     remove_dig_gains=remove_dig_gains,
                     remove_coarse_band=remove_coarse_band,
                     correct_cable_len=correct_cable_len,
+                    correct_van_vleck=correct_van_vleck,
                     propagate_coarse_flags=propagate_coarse_flags,
                     flag_init=flag_init,
                     edge_width=edge_width,
