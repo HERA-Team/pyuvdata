@@ -14,6 +14,7 @@ from pyuvdata.data import DATA_PATH
 
 from scipy.optimize import root, minimize
 from scipy.special import erf
+from scipy.integrate import quad
 
 from .. import _corr_fits
 
@@ -35,6 +36,7 @@ def input_output_mapping():
     return _corr_fits.input_output_mapping()
 
 
+# @profile
 def sighat_vector(x, bits):
     """
     Generate quantized sigma from a given sigma input.
@@ -61,10 +63,12 @@ def sighat_vector(x, bits):
     return sighat
 
 
+# @profile
 def autos_opt_func(x, sighat):
     return sighat_vector(x, 4) - sighat
 
 
+# @profile
 def corrcorrect_vect(rho, bits, xsig, ysig):
     """Generate quantized covariance from correlation and sigma inputs."""
     # create an integration grid for midpoint summation
@@ -107,6 +111,7 @@ def corrcorrect_vect(rho, bits, xsig, ysig):
     return result
 
 
+# @profile
 def corrcorrect_vect_prime(rho, bits, xsig, ysig):
     # assign the upper level of the quantization
     m = 2 ** (bits - 1) - 1
@@ -139,13 +144,42 @@ def corrcorrect_vect_prime(rho, bits, xsig, ysig):
     return z
 
 
+# @profile
 def corr_least_squares(x, kaphat, sig1, sig2):
     return np.sum((corrcorrect_vect(x, 4, sig1, sig2) - kaphat) ** 2)
 
 
+# @profile
 def corr_least_squares_prime(x, kaphat, sig1, sig2):
-    return (corrcorrect_vect(x, 4, sig1, sig2) - kaphat) * corrcorrect_vect_prime(
-        x, 4, sig2, sig2
+    return (
+        2
+        * (corrcorrect_vect(x, 4, sig1, sig2) - kaphat)
+        * corrcorrect_vect_prime(x, 4, sig2, sig2)
+    )
+
+
+# @profile
+def corrcorrect_quad(rho, bits, xsig, ysig):
+    result = [
+        quad(
+            corrcorrect_vect_prime, 0, rho[i], args=(4, xsig[i], ysig[i],), epsabs=1e-10
+        )[0]
+        for i in range(len(rho))
+    ]
+    return np.array(result)
+
+
+# @profile
+def corr_least_squares_quad(x, kaphat, sig1, sig2):
+    return np.sum((corrcorrect_quad(x, 4, sig1, sig2) - kaphat) ** 2)
+
+
+# @profile
+def corr_least_squares_prime_quad(x, kaphat, sig1, sig2):
+    return (
+        2
+        * (corrcorrect_quad(x, 4, sig1, sig2) - kaphat)
+        * corrcorrect_vect_prime(x, 4, sig2, sig2)
     )
 
 
@@ -157,6 +191,7 @@ class MWACorrFITS(UVData):
     read_mwa_corr_fits method on the UVData class.
     """
 
+    # @profile
     def correct_cable_length(self, cable_lens):
         """
         Apply a cable length correction to the data array.
@@ -320,6 +355,7 @@ class MWACorrFITS(UVData):
                 ] = 1.0
                 self.flag_array[time_ind, :, file_nums_to_index[file_num], :] = False
         return
+
     def van_vleck_correction(self):
         """Apply a van vleck correction to the data array."""
         # get indices for autos
@@ -364,10 +400,6 @@ class MWACorrFITS(UVData):
 
         # correct everything else
         pols = [0, 1, 2, 3]
-        # combining the time and frequency arrays makes the correction too large
-        self.data_array = self.data_array.reshape(
-            (self.Nbls, self.Ntimes, self.Nfreqs, self.Npols)
-        )
         for i in pols:
             # look up auto pol inds
             pol_inds = pol_dict[i]
@@ -379,64 +411,56 @@ class MWACorrFITS(UVData):
             for k in bls:
                 auto1 = autos[self.ant_1_array[k]]
                 auto2 = autos[self.ant_2_array[k]]
-                for j in range(self.Nfreqs):
-                    # correct real
-                    zero_inds = np.where(self.data_array.real[k, :, j, i] != 0.0)[0]
-                    neg_inds = np.where(self.data_array.real[k, zero_inds, j, i] < 0.0)[
-                        0
-                    ]
-                    kaphat_array = np.abs(self.data_array.real[k, zero_inds, j, i])
-                    if len(kaphat_array) > 0:
-                        sig_array1 = self.data_array.real[
-                            auto1, zero_inds, j, pol_inds[0]
-                        ]
-                        sig_array2 = self.data_array.real[
-                            auto2, zero_inds, j, pol_inds[1]
-                        ]
-                        # generate initial guess
-                        x0 = kaphat_array / (sig_array1 * sig_array2)
-                        result = minimize(
-                            corr_least_squares,
-                            jac=corr_least_squares_prime,
-                            x0=x0,
-                            args=(kaphat_array, sig_array1, sig_array2),
-                            tol=1e-8,
-                            method="CG",
-                        )
-                        result["x"][neg_inds] = np.negative(result["x"][neg_inds])
-                        self.data_array.real[k, zero_inds, j, i] = (
-                            result["x"] * sig_array1 * sig_array2
-                        )
-                    # correct imaginary
-                    zero_inds = np.where(self.data_array.imag[k, :, j, i] != 0.0)[0]
-                    neg_inds = np.where(self.data_array.imag[k, zero_inds, j, i] < 0.0)[
-                        0
-                    ]
-                    kaphat_array = np.abs(self.data_array.imag[k, zero_inds, j, i])
-                    if len(kaphat_array) > 0:
-                        sig_array1 = self.data_array.real[
-                            auto1, zero_inds, j, pol_inds[0]
-                        ]
-                        sig_array2 = self.data_array.real[
-                            auto2, zero_inds, j, pol_inds[1]
-                        ]
-                        x0 = kaphat_array / (sig_array1 * sig_array2)
-                        result = minimize(
-                            corr_least_squares,
-                            jac=corr_least_squares_prime,
-                            x0=x0,
-                            args=(kaphat_array, sig_array1, sig_array2),
-                            tol=1e-8,
-                            method="CG",
-                        )
-                        result["x"][neg_inds] = np.negative(result["x"][neg_inds])
-                        self.data_array.imag[k, zero_inds, j, i] = (
-                            result["x"] * sig_array1 * sig_array2
-                        )
+                # correct real
+                zero_inds = np.where(self.data_array.real[k, :, i] != 0.0)[0]
+                neg_inds = np.where(self.data_array.real[k, zero_inds, i] < 0.0)[0]
+                kaphat_array = np.abs(self.data_array.real[k, zero_inds, i])
+                if len(kaphat_array) > 0:
+                    sig_array1 = self.data_array.real[auto1, zero_inds, pol_inds[0]]
+                    sig_array2 = self.data_array.real[auto2, zero_inds, pol_inds[1]]
+                    # generate initial guess
+                    x0 = kaphat_array / (sig_array1 * sig_array2)
+                    result = minimize(
+                        corr_least_squares_quad,
+                        jac=corr_least_squares_prime_quad,
+                        x0=x0,
+                        args=(kaphat_array, sig_array1, sig_array2),
+                        tol=1e-8,
+                        method="CG",
+                    )
+                    result["x"][neg_inds] = np.negative(result["x"][neg_inds])
+                    self.data_array.real[k, zero_inds, i] = (
+                        result["x"] * sig_array1 * sig_array2
+                    )
+                # correct imaginary
+                zero_inds = np.where(self.data_array.imag[k, :, i] != 0.0)[0]
+                neg_inds = np.where(self.data_array.imag[k, zero_inds, i] < 0.0)[0]
+                kaphat_array = np.abs(self.data_array.imag[k, zero_inds, i])
+                if len(kaphat_array) > 0:
+                    sig_array1 = self.data_array.real[auto1, zero_inds, pol_inds[0]]
+                    sig_array2 = self.data_array.real[auto2, zero_inds, pol_inds[1]]
+                    x0 = kaphat_array / (sig_array1 * sig_array2)
+                    result = minimize(
+                        corr_least_squares_quad,
+                        jac=corr_least_squares_prime_quad,
+                        x0=x0,
+                        args=(kaphat_array, sig_array1, sig_array2),
+                        tol=1e-8,
+                        method="CG",
+                    )
+                    result["x"][neg_inds] = np.negative(result["x"][neg_inds])
+                    self.data_array.imag[k, zero_inds, i] = (
+                        result["x"] * sig_array1 * sig_array2
+                    )
         # square autos
-        self.data_array.real[autos, :, :, 0] = self.data_array.real[autos, :, :, 0] ** 2
-        self.data_array.real[autos, :, :, 1] = self.data_array.real[autos, :, :, 1] ** 2
+        self.data_array.real[autos, :, 0] = self.data_array.real[autos, :, 0] ** 2
+        self.data_array.real[autos, :, 3] = self.data_array.real[autos, :, 3] ** 2
+        # reshape data array
+        self.data_array = self.data_array.reshape(
+            (self.Nbls, self.Ntimes, self.Nfreqs, self.Npols)
+        )
 
+    # @profile
     def read_mwa_corr_fits(
         self,
         filelist,
