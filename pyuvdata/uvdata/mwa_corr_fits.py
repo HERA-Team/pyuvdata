@@ -12,7 +12,8 @@ from astropy import constants as const
 
 from pyuvdata.data import DATA_PATH
 
-from scipy.optimize import root, minimize
+from scipy.optimize import root
+
 from scipy.special import erf
 from scipy.integrate import quad
 
@@ -63,9 +64,33 @@ def sighat_vector(x, bits):
     return sighat
 
 
+def sighat_vector_prime(x, bits):
+    # assign the upper level of the quantization
+    m = 2 ** (bits - 1) - 1
+    # create an array
+    y = np.array([range(m)])
+    # create a sparse array to perform the function accross
+    xx, yy = np.meshgrid(x, y, sparse=True)
+    # compute terms of summation
+    z = (
+        (2 * yy + 1)
+        * (yy + 0.5)
+        * np.exp(-((yy + 0.05) ** 2) / (2 * (xx ** 2)))
+        / (np.sqrt(np.pi) * (xx ** 2))
+    )
+    # print(z.shape)
+    # sum terms
+    sighat_prime = z.sum(axis=0)
+    return sighat_prime
+
+
 # @profile
 def autos_opt_func(x, sighat):
     return sighat_vector(x, 4) - sighat
+
+
+def autos_root_jac(x, sighat):
+    return np.diag(sighat_vector_prime(x, 4) / (2 * sighat_vector(x, 4)))
 
 
 # @profile
@@ -117,7 +142,10 @@ def corrcorrect_vect_prime(rho, bits, xsig, ysig):
     m = 2 ** (bits - 1) - 1
     # create variables for summation
     i = np.arange(0, m, 1)
-    ii, kk, xx = np.meshgrid(i, i, rho, sparse=True)
+    # ii, kk, xx = np.meshgrid(i, i, rho, sparse=True)
+    ii = np.reshape(i, (1, len(i)))
+    kk = np.reshape(i, (len(i), 1))
+    xx = rho
     # set up summation
     z = (1 / (np.pi * np.sqrt(1 - xx ** 2))) * (
         np.exp(
@@ -145,20 +173,6 @@ def corrcorrect_vect_prime(rho, bits, xsig, ysig):
 
 
 # @profile
-def corr_least_squares(x, kaphat, sig1, sig2):
-    return np.sum((corrcorrect_vect(x, 4, sig1, sig2) - kaphat) ** 2)
-
-
-# @profile
-def corr_least_squares_prime(x, kaphat, sig1, sig2):
-    return (
-        2
-        * (corrcorrect_vect(x, 4, sig1, sig2) - kaphat)
-        * corrcorrect_vect_prime(x, 4, sig2, sig2)
-    )
-
-
-# @profile
 def corrcorrect_quad(rho, bits, xsig, ysig):
     result = [
         quad(
@@ -170,17 +184,33 @@ def corrcorrect_quad(rho, bits, xsig, ysig):
 
 
 # @profile
-def corr_least_squares_quad(x, kaphat, sig1, sig2):
-    return np.sum((corrcorrect_quad(x, 4, sig1, sig2) - kaphat) ** 2)
+def corr_root_func(x, kaphat, sig1, sig2):
+    return corrcorrect_quad(x, 4, sig1, sig2) - kaphat
 
 
 # @profile
-def corr_least_squares_prime_quad(x, kaphat, sig1, sig2):
-    return (
+def corr_root_jac(x, kaphat, xsig, ysig):
+    # assign the upper level of the quantization
+    m = 2 ** (4 - 1) - 1
+    # create variables for summation
+    i = np.arange(0, m, 1)
+    ii = np.reshape(i, (1, len(i), 1))
+    kk = np.reshape(i, (len(i), 1, 1))
+    xsig = np.reshape(xsig, (1, 1, len(xsig)))
+    z = (
         2
-        * (corrcorrect_quad(x, 4, sig1, sig2) - kaphat)
-        * corrcorrect_vect_prime(x, 4, sig2, sig2)
+        * (np.exp(-(((ii + 0.5) ** 2 / xsig ** 2) + ((kk + 0.5) ** 2 / ysig ** 2)) / 2))
+        / (np.pi)
     )
+    z = z.sum(0)
+    z = z.sum(0)
+    return np.diag(z)
+
+
+# @profile
+# this one requires more interval evaluations
+def corr_root_jac2(x, kaphat, sig1, sig2):
+    return np.diag(sig1 * sig2)
 
 
 class MWACorrFITS(UVData):
@@ -391,15 +421,17 @@ class MWACorrFITS(UVData):
                 # get correction
                 result = root(
                     autos_opt_func,
+                    jac=autos_root_jac,
                     x0=sighat_array,
                     args=(sighat_array,),
-                    method="broyden1",
+                    method="hybr",
+                    options={"col_deriv": 1},
                     tol=1e-10,
                 )
                 self.data_array.real[k, zero_inds, i] = result["x"]
-
         # correct everything else
-        pols = [0, 1, 2, 3]
+        # TODO: remember to change this back to correct all pols!!!
+        pols = [0]
         for i in pols:
             # look up auto pol inds
             pol_inds = pol_dict[i]
@@ -409,6 +441,7 @@ class MWACorrFITS(UVData):
             else:
                 bls = crosses
             for k in bls:
+                print("correcting baseline " + str(k) + " pol " + str(i))
                 auto1 = autos[self.ant_1_array[k]]
                 auto2 = autos[self.ant_2_array[k]]
                 # correct real
@@ -420,13 +453,25 @@ class MWACorrFITS(UVData):
                     sig_array2 = self.data_array.real[auto2, zero_inds, pol_inds[1]]
                     # generate initial guess
                     x0 = kaphat_array / (sig_array1 * sig_array2)
-                    result = minimize(
-                        corr_least_squares_quad,
-                        jac=corr_least_squares_prime_quad,
+                    # =============================================================================
+                    #                     result = minimize(
+                    #                         corr_least_squares_quad,
+                    #                         jac=corr_least_squares_prime_quad,
+                    #                         x0=x0,
+                    #                         args=(kaphat_array, sig_array1,
+                    #                               sig_array2),
+                    #                         tol=1e-8,
+                    #                         method="CG",
+                    #                     )
+                    # =============================================================================
+                    result = root(
+                        corr_root_func,
+                        jac=corr_root_jac,
                         x0=x0,
                         args=(kaphat_array, sig_array1, sig_array2),
-                        tol=1e-8,
-                        method="CG",
+                        tol=1e-10,
+                        method="hybr",
+                        options={"col_deriv": 1},
                     )
                     result["x"][neg_inds] = np.negative(result["x"][neg_inds])
                     self.data_array.real[k, zero_inds, i] = (
@@ -440,13 +485,25 @@ class MWACorrFITS(UVData):
                     sig_array1 = self.data_array.real[auto1, zero_inds, pol_inds[0]]
                     sig_array2 = self.data_array.real[auto2, zero_inds, pol_inds[1]]
                     x0 = kaphat_array / (sig_array1 * sig_array2)
-                    result = minimize(
-                        corr_least_squares_quad,
-                        jac=corr_least_squares_prime_quad,
+                    # =============================================================================
+                    #                     result = minimize(
+                    #                         corr_least_squares_quad,
+                    #                         jac=corr_least_squares_prime_quad,
+                    #                         x0=x0,
+                    #                         args=(kaphat_array, sig_array1,
+                    #                               sig_array2),
+                    #                         tol=1e-8,
+                    #                         method="CG",
+                    #                     )
+                    # =============================================================================
+                    result = root(
+                        corr_root_func,
+                        jac=corr_root_jac,
                         x0=x0,
                         args=(kaphat_array, sig_array1, sig_array2),
-                        tol=1e-8,
-                        method="CG",
+                        tol=1e-10,
+                        method="hybr",
+                        options={"col_deriv": 1},
                     )
                     result["x"][neg_inds] = np.negative(result["x"][neg_inds])
                     self.data_array.imag[k, zero_inds, i] = (
