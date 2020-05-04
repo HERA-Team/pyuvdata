@@ -86,20 +86,6 @@ def test_read_mwa_write_uvfits(tmp_path):
     uvfits_uv.read_uvfits(testfile)
     assert mwa_uv == uvfits_uv
 
-    messages = [
-        "telescope_location is not set",
-        "some coarse channel files were not submitted",
-    ]
-    with uvtest.check_warnings(UserWarning, messages):
-        mwa_uv.read_mwa_corr_fits(
-            filelist[0:2], correct_cable_len=True, phase_to_pointing_center=True
-        )
-
-    testfile = str(tmp_path / "outtest_MWAcorr.uvfits")
-    mwa_uv.write_uvfits(testfile, spoof_nonessential=True)
-    uvfits_uv.read_uvfits(testfile)
-    assert mwa_uv == uvfits_uv
-
 
 @pytest.mark.filterwarnings("ignore:telescope_location is not set. ")
 @pytest.mark.filterwarnings("ignore:some coarse channel files were not submitted")
@@ -271,7 +257,7 @@ def test_multiple_coarse():
     Read in MWA correlator files with two different orderings of the files
     and check for object equality.
     """
-    order1 = [filelist[0:3]]
+    order1 = filelist[0:3]
     order2 = [filelist[0], filelist[2], filelist[1]]
     mwa_uv1 = UVData()
     mwa_uv2 = UVData()

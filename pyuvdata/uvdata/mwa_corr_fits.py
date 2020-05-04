@@ -732,13 +732,13 @@ class MWACorrFITS(UVData):
 
                     # get scaling info
                     if bscale is None:
-                        if "BSCALE" in headstart.keys():
-                            bscale = headstart["BSCALE"]
-                            self.extra_keywords["BSCALE"] = headstart["BSCALE"]
+                        if "BSCALE" in head0.keys():
+                            bscale = head0["BSCALE"]
+                            self.extra_keywords["SCALEFAC"] = head0["BSCALE"]
                         else:
                             # correlator did a divide by 4 before october 2014
                             bscale = 0.25
-                            self.extra_keywords["BSCALE"] = 0.25
+                            self.extra_keywords["SCALEFAC"] = 0.25
 
             # look for flag files
             elif file.lower().endswith(".mwaf"):
@@ -1109,6 +1109,11 @@ class MWACorrFITS(UVData):
                 self.data_array = np.swapaxes(self.data_array, 0, 1)
                 # rescale the data
                 self.data_array = self.data_array * (nsamples * bscale * 2)
+            else:
+                # some MWA data has an error introduced in quantization that is
+                # remedied by being cast into integer
+                self.data_array = np.rint(self.data_array / bscale)
+                self.data_array = self.data_array * bscale
 
             # divide out digital gains
             if remove_dig_gains:
