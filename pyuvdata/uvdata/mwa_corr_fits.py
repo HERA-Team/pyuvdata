@@ -207,8 +207,66 @@ def corr_root_jac(x, kaphat, xsig, ysig):
     return np.diag(z)
 
 
+def corrcorrect_approx_taylor(rho, sig1, sig2):
+    a = np.arange(-6.5, 7.5, 1.0)
+    # reshape
+    aa = np.reshape(a, (len(a), 1, 1)) / sig1
+    # print(aa.shape)
+    bb = np.reshape(a, (1, len(a), 1)) / sig2
+    # print(bb.shape)
+    xx = np.reshape(rho, (1, 1, len(rho)))
+    kaphat = (
+        (1 / (2 * np.pi)) * np.exp(-(aa ** 2 + bb ** 2) / 2) * (xx + aa * bb * xx ** 2)
+    )
+    kaphat = kaphat.sum(0)
+    kaphat = kaphat.sum(0)
+    return kaphat
+
+
+def corr_root_func_approx_taylor(x, kaphat, sig1, sig2):
+    return corrcorrect_approx_taylor(x, sig1, sig2) - kaphat
+
+
+def corrcorrect_approx_integrand(rho, sig1, sig2):
+    a = np.arange(-6.5, 7.5, 1.0)
+    # reshape
+    aa = np.reshape(a, (len(a), 1, 1)) / sig1
+    # print(aa.shape)
+    bb = np.reshape(a, (1, len(a), 1)) / sig2
+    # print(bb.shape)
+    xx = np.reshape(rho, (1, 1, len(rho)))
+    # print(xx.shape)
+    kaphat = (
+        (1 / (4 * np.pi * (aa ** 2 + bb ** 2) ** (5 / 2)))
+        * np.exp((-(aa ** 2 + bb ** 2) / 2))
+        * (
+            np.sqrt(aa ** 2 + bb ** 2) * aa * bb
+            - np.sqrt(aa ** 2 + bb ** 2)
+            * (aa * bb + xx * (aa ** 2 + bb ** 2))
+            * np.exp(-(aa ** 2 + bb ** 2) * (xx ** 2) / 2 + aa * bb * xx)
+            + np.sqrt(np.pi / 2)
+            * (2 * (aa ** 4 + bb ** 4) + aa ** 2 + bb ** 2 + 5 * aa ** 2 * bb ** 2)
+            * np.exp(aa ** 2 * bb ** 2 / (2 * (aa ** 2 + bb ** 2)))
+            * (
+                erf(
+                    (-aa * bb + xx * (aa ** 2 + bb ** 2))
+                    / np.sqrt(2 * (aa ** 2 + bb ** 2))
+                )
+                - erf(-aa * bb / np.sqrt(2 * (aa ** 2 + bb ** 2)))
+            )
+        )
+    )
+    kaphat = kaphat.sum(0)
+    kaphat = kaphat.sum(0)
+    return kaphat
+
+
+def corr_root_func_approx_integrand(x, kaphat, sig1, sig2):
+    return corrcorrect_approx_integrand(x, sig1, sig2) - kaphat
+
+
 # @profile
-# this one requires more interval evaluations
+# this one requires more integral evaluations
 def corr_root_jac2(x, kaphat, sig1, sig2):
     return np.diag(sig1 * sig2)
 
@@ -465,7 +523,7 @@ class MWACorrFITS(UVData):
                     #                     )
                     # =============================================================================
                     result = root(
-                        corr_root_func,
+                        corr_root_func_approx_integrand,
                         jac=corr_root_jac,
                         x0=x0,
                         args=(kaphat_array, sig_array1, sig_array2),
@@ -497,7 +555,7 @@ class MWACorrFITS(UVData):
                     #                     )
                     # =============================================================================
                     result = root(
-                        corr_root_func,
+                        corr_root_func_approx_integrand,
                         jac=corr_root_jac,
                         x0=x0,
                         args=(kaphat_array, sig_array1, sig_array2),
