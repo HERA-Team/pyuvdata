@@ -15,7 +15,7 @@ from pyuvdata.data import DATA_PATH
 from scipy.optimize import root
 
 from scipy.special import erf
-from scipy.integrate import quad
+from scipy.integrate import quad, simps
 
 from .. import _corr_fits
 
@@ -52,11 +52,11 @@ def sighat_vector(x, bits):
     # assign the upper level of the quantization
     m = 2 ** (bits - 1) - 1
     # create an array
-    y = np.array([range(m)])
+    y = np.arange(m)
     # create a sparse array to perform the function accross
-    xx, yy = np.meshgrid(x, y, sparse=True)
+    yy = np.reshape(y, (len(y), 1))
     # compute terms of summation
-    z = (2 * yy + 1) * erf((yy + 0.5) / (xx * np.sqrt(2)))
+    z = (2 * yy + 1) * erf((yy + 0.5) / (x * np.sqrt(2)))
     # sum terms
     z = z.sum(axis=0)
     # create a new array that is the standard deviation of the quantized signal
@@ -68,15 +68,15 @@ def sighat_vector_prime(x, bits):
     # assign the upper level of the quantization
     m = 2 ** (bits - 1) - 1
     # create an array
-    y = np.array([range(m)])
+    y = np.arange(m)
     # create a sparse array to perform the function accross
-    xx, yy = np.meshgrid(x, y, sparse=True)
+    yy = np.reshape(y, (len(y), 1))
     # compute terms of summation
     z = (
         (2 * yy + 1)
         * (yy + 0.5)
-        * np.exp(-((yy + 0.05) ** 2) / (2 * (xx ** 2)))
-        / (np.sqrt(np.pi) * (xx ** 2))
+        * np.exp(-((yy + 0.05) ** 2) / (2 * (x ** 2)))
+        / (np.sqrt(np.pi) * (x ** 2))
     )
     # print(z.shape)
     # sum terms
@@ -207,6 +207,47 @@ def corr_root_jac(x, kaphat, xsig, ysig):
     return np.diag(z)
 
 
+# @profile
+def corrcorrect_simps(rho, xsig, ysig):
+    i = np.arange(0, 7, 1)
+    x = np.linspace(0, rho, 1001)
+    ii = np.reshape(i, (1, len(i), 1, 1))
+    kk = np.reshape(i, (len(i), 1, 1, 1))
+    xx = np.reshape(x, (1, 1, 1001, len(rho)))
+    # set up summation
+    z = (1 / (np.pi * np.sqrt(1 - xx ** 2))) * (
+        np.exp(
+            -(1 / (2 * (1 - xx ** 2)))
+            * (
+                ((ii + 0.5) ** 2 / xsig ** 2)
+                + ((kk + 0.5) ** 2 / ysig ** 2)
+                - 2 * xx * (ii + 0.5) * (kk + 0.5) / (xsig * ysig)
+            )
+        )
+        + np.exp(
+            -(1 / (2 * (1 - xx ** 2)))
+            * (
+                ((ii + 0.5) ** 2 / xsig ** 2)
+                + ((kk + 0.5) ** 2 / ysig ** 2)
+                + 2 * xx * (ii + 0.5) * (kk + 0.5) / (xsig * ysig)
+            )
+        )
+    )
+    # sum over i
+    z = z.sum(0)
+    # sum over k
+    z = z.sum(0)
+    # integrate with simps
+    khat = simps(z, x, axis=0)
+    return khat
+
+
+# @profile
+def corr_root_func_simps(x, kaphat, sig1, sig2):
+    return corrcorrect_simps(x, sig1, sig2) - kaphat
+
+
+# @profile
 def corrcorrect_approx_taylor(rho, sig1, sig2):
     a = np.arange(-6.5, 7.5, 1.0)
     # reshape
@@ -215,18 +256,35 @@ def corrcorrect_approx_taylor(rho, sig1, sig2):
     bb = np.reshape(a, (1, len(a), 1)) / sig2
     # print(bb.shape)
     xx = np.reshape(rho, (1, 1, len(rho)))
-    kaphat = (
+    khat = (
         (1 / (2 * np.pi)) * np.exp(-(aa ** 2 + bb ** 2) / 2) * (xx + aa * bb * xx ** 2)
     )
-    kaphat = kaphat.sum(0)
-    kaphat = kaphat.sum(0)
-    return kaphat
+    khat = khat.sum(0)
+    khat = khat.sum(0)
+    return khat
 
 
+# @profile
 def corr_root_func_approx_taylor(x, kaphat, sig1, sig2):
     return corrcorrect_approx_taylor(x, sig1, sig2) - kaphat
 
 
+# @profile
+def corr_root_jac_taylor(x, kaphat, sig1, sig2):
+    a = np.arange(-6.5, 7.5, 1.0)
+    # reshape
+    aa = np.reshape(a, (len(a), 1, 1)) / sig1
+    # print(aa.shape)
+    bb = np.reshape(a, (1, len(a), 1)) / sig2
+    # print(bb.shape)
+    xx = np.reshape(x, (1, 1, len(x)))
+    khat = (1 / (2 * np.pi)) * np.exp(-(aa ** 2 + bb ** 2) / 2) * (1 + aa * bb * xx * 2)
+    khat = khat.sum(0)
+    khat = khat.sum(0)
+    return np.diag(khat)
+
+
+# @profile
 def corrcorrect_approx_integrand(rho, sig1, sig2):
     a = np.arange(-6.5, 7.5, 1.0)
     # reshape
@@ -236,7 +294,7 @@ def corrcorrect_approx_integrand(rho, sig1, sig2):
     # print(bb.shape)
     xx = np.reshape(rho, (1, 1, len(rho)))
     # print(xx.shape)
-    kaphat = (
+    khat = (
         (1 / (4 * np.pi * (aa ** 2 + bb ** 2) ** (5 / 2)))
         * np.exp((-(aa ** 2 + bb ** 2) / 2))
         * (
@@ -256,11 +314,12 @@ def corrcorrect_approx_integrand(rho, sig1, sig2):
             )
         )
     )
-    kaphat = kaphat.sum(0)
-    kaphat = kaphat.sum(0)
-    return kaphat
+    khat = khat.sum(0)
+    khat = khat.sum(0)
+    return khat
 
 
+# @profile
 def corr_root_func_approx_integrand(x, kaphat, sig1, sig2):
     return corrcorrect_approx_integrand(x, sig1, sig2) - kaphat
 
@@ -471,6 +530,7 @@ class MWACorrFITS(UVData):
                 self.data_array.real[autos, :, i]
             )
             for k in autos:
+                print("correcting auto: " + str(k))
                 # TODO: think about correcting zeros
                 # so one weird thing is at low sigma things get rounded up to 0.06
                 # don't correct zeros?
@@ -1138,17 +1198,6 @@ class MWACorrFITS(UVData):
             )[0]
             self.flag_array[:, bad_ant_inds, :, :] = True
 
-            # combine baseline and time axes
-            self.data_array = self.data_array.reshape(
-                (self.Nblts, self.Nfreqs, self.Npols)
-            )
-            self.flag_array = self.flag_array.reshape(
-                (self.Nblts, self.Nfreqs, self.Npols)
-            )
-            self.nsample_array = self.nsample_array.reshape(
-                (self.Nblts, self.Nfreqs, self.Npols)
-            )
-
             # van vleck correction
             if correct_van_vleck:
                 # scale the data
@@ -1159,19 +1208,32 @@ class MWACorrFITS(UVData):
                 # take advantage of cicular polarization! divide by two
                 self.data_array = self.data_array / nsamples
                 self.data_array = self.data_array / 2.0
-                # do some convenient reshaping
+                # reshape to (nbls, ntimes, nfreqs, npols)
                 self.data_array = np.swapaxes(self.data_array, 0, 1)
                 # self.data_array = np.around(self.data_array, round_factor)
                 self.van_vleck_correction()
-                # reshape the data
+                # reshape to (ntimes, nbls, nfreqs, npols)
                 self.data_array = np.swapaxes(self.data_array, 0, 1)
                 # rescale the data
-                self.data_array = self.data_array * (nsamples * bscale * 2)
+                self.data_array = self.data_array * (bscale * nsamples * 2)
+
             else:
-                # some MWA data has an error introduced in quantization that is
-                # remedied by being cast into integer
+                # when MWA data is cast to float for the correlator, the division
+                # by 127 introduces small errors that are mitigated when the data
+                # is cast back into integer
                 self.data_array = np.rint(self.data_array / bscale)
                 self.data_array = self.data_array * bscale
+
+            # combine baseline and time axes
+            self.data_array = self.data_array.reshape(
+                (self.Nblts, self.Nfreqs, self.Npols)
+            )
+            self.flag_array = self.flag_array.reshape(
+                (self.Nblts, self.Nfreqs, self.Npols)
+            )
+            self.nsample_array = self.nsample_array.reshape(
+                (self.Nblts, self.Nfreqs, self.Npols)
+            )
 
             # divide out digital gains
             if remove_dig_gains:
