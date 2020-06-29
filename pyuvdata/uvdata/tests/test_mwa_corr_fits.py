@@ -13,6 +13,8 @@ from pyuvdata.data import DATA_PATH
 import pyuvdata.tests as uvtest
 from pyuvdata.uvdata.mwa_corr_fits import input_output_mapping
 from astropy.io import fits
+from scipy.special import erf
+from scipy.integrate import simps
 
 # set up MWA correlator file list
 testdir = os.path.join(DATA_PATH, "mwa_corr_fits_testfiles/")
@@ -795,3 +797,128 @@ def test_input_output_mapping():
     assert function_output == mapping_dict
 
     return
+
+
+@pytest.mark.filterwarnings("ignore:telescope_location is not set. ")
+@pytest.mark.filterwarnings("ignore:some coarse channel files were not submitted")
+def test_van_vleck_turnaround():
+    """Test van vleck correction."""
+
+    def sighat_vector(x):
+        m = 7
+        # create an array
+        y = np.arange(m)
+        # create a sparse array to perform the function accross
+        yy = np.reshape(y, (len(y), 1))
+        # compute terms of summation
+        z = (2 * yy + 1) * erf((yy + 0.5) / (x * np.sqrt(2)))
+        # sum terms
+        z = z.sum(axis=0)
+        # create a new array that is the standard deviation of the quantized signal
+        sighat = np.sqrt(m ** 2 - z)
+        return sighat
+
+    def corrcorrect_simps(rho, sig1, sig2):
+        i = np.arange(0.5, 7.5, 1)
+        x = np.linspace(0, rho, 11)
+        j = np.reshape(i, (1, len(i), 1, 1)) / sig1
+        k = np.reshape(i, (len(i), 1, 1, 1)) / sig2
+        xx = np.reshape(x, (1, 1, 11, len(rho)))
+        # set up summation
+        khat = (1 / (np.pi * np.sqrt(1 - xx ** 2))) * (
+            np.exp(-(1 / (2 * (1 - xx ** 2))) * ((j ** 2) + (k ** 2) - 2 * xx * j * k))
+            + np.exp(
+                -(1 / (2 * (1 - xx ** 2))) * ((j ** 2) + (k ** 2) + 2 * xx * j * k)
+            )
+        )
+        # sum over i
+        khat = khat.sum(0)
+        # sum over k
+        khat = khat.sum(0)
+        # integrate with simps
+        khat = simps(khat, x, axis=0)
+        return khat
+
+    uv = UVData()
+    uv.read(filelist[0:2], flag_init=False, correct_van_vleck=True)
+    uv2 = UVData()
+    uv2.read(filelist[0:2], flag_init=False)
+    # scale data
+    uv.data_array = uv.data_array / (20000 * 2 * 0.5)
+    uv2.data_array = uv2.data_array / (20000 * 2 * 0.5)
+
+    autos = np.where(uv.ant_1_array == uv.ant_2_array)[0]
+    autos = autos[:, np.newaxis]
+    crosses = np.where(uv.ant_1_array != uv.ant_2_array)[0]
+    sig1_inds = autos[uv.ant_1_array]
+    sig1_inds = sig1_inds[crosses]
+    sig1_inds = sig1_inds[:, np.newaxis]
+    sig2_inds = autos[uv.ant_2_array]
+    sig2_inds = sig2_inds[crosses]
+    sig2_inds = sig2_inds[:, np.newaxis]
+    # square root autos
+    uv.data_array.real[autos, :, :, 0] = np.sqrt(uv.data_array.real[autos, :, :, 0])
+    uv.data_array.real[autos, :, :, 1] = np.sqrt(uv.data_array.real[autos, :, :, 1])
+    uv2.data_array.real[autos, :, :, 0] = np.sqrt(uv2.data_array.real[autos, :, :, 0])
+    uv2.data_array.real[autos, :, :, 1] = np.sqrt(uv2.data_array.real[autos, :, :, 1])
+
+    # turnaround autos
+    corr = uv.data_array.real[autos, :, :, np.array([0, 1])].flatten()
+    turn = sighat_vector(corr)
+    no_corr = uv2.data_array.real[autos, :, :, np.array([0, 1])].flatten()
+
+    assert np.allclose(turn, no_corr, rtol=0, atol=1e-9)
+
+    # turnaround xy and yx autos
+    sig1 = uv.data_array.real[autos, :, :, np.array([0, 1])].flatten()
+    sig2 = uv.data_array.real[autos, :, :, np.array([1, 0])].flatten()
+
+    corr = np.abs(uv.data_array.real[autos, :, :, np.array([2, 3])].flatten())
+    neg_inds = np.where(
+        uv.data_array.real[autos, :, :, np.array([2, 3])].flatten() < 0.0
+    )[0]
+    corr = corr / (sig1 * sig2)
+    turn = corrcorrect_simps(corr, sig1, sig2)
+    turn[neg_inds] = np.negative(turn[neg_inds])
+    no_corr = uv2.data_array.real[autos, :, :, np.array([2, 3])].flatten()
+
+    assert np.allclose(turn, no_corr, rtol=0, atol=1e-10)
+
+    corr = np.abs(uv.data_array.imag[autos, :, :, np.array([2, 3])].flatten())
+    neg_inds = np.where(
+        uv.data_array.imag[autos, :, :, np.array([2, 3])].flatten() < 0.0
+    )[0]
+    corr = corr / (sig1 * sig2)
+    turn = corrcorrect_simps(corr, sig1, sig2)
+    turn[neg_inds] = np.negative(turn[neg_inds])
+    no_corr = uv2.data_array.imag[autos, :, :, np.array([2, 3])].flatten()
+
+    assert np.allclose(turn, no_corr, rtol=0, atol=1e-10)
+
+    # turnaround crosses
+    sig1 = uv.data_array.real[sig1_inds, 0, :, np.array([0, 1, 0, 1])].swapaxes(1, 2)
+    sig2 = uv.data_array.real[sig2_inds, 0, :, np.array([0, 1, 1, 0])].swapaxes(1, 2)
+    sig1 = sig1.flatten()
+    sig2 = sig2.flatten()
+
+    corr = uv.data_array.real[crosses, 0, :, :].flatten()
+    zero_inds = np.where(corr != 0.0)[0]
+    neg_inds = np.where(corr < 0.0)[0]
+    rho = np.abs(corr[zero_inds] / (sig1[zero_inds] * sig2[zero_inds]))
+    turn = corrcorrect_simps(rho, sig1[zero_inds], sig2[zero_inds])
+    corr[zero_inds] = turn
+    corr[neg_inds] = np.negative(corr[neg_inds])
+    no_corr = uv2.data_array.real[crosses, 0, :, :].flatten()
+
+    assert np.allclose(corr, no_corr, rtol=0, atol=1e-10)
+
+    corr = uv.data_array.imag[crosses, 0, :, :].flatten()
+    zero_inds = np.where(corr != 0.0)[0]
+    neg_inds = np.where(corr < 0.0)[0]
+    rho = np.abs(corr[zero_inds] / (sig1[zero_inds] * sig2[zero_inds]))
+    turn = corrcorrect_simps(rho, sig1[zero_inds], sig2[zero_inds])
+    corr[zero_inds] = turn
+    corr[neg_inds] = np.negative(corr[neg_inds])
+    no_corr = uv2.data_array.imag[crosses, 0, :, :].flatten()
+
+    assert np.allclose(corr, no_corr, rtol=0, atol=1e-10)

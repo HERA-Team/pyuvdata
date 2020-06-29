@@ -577,25 +577,18 @@ class MWACorrFITS(UVData):
         self.data_array = self.data_array.reshape(
             (self.Nbls, self.Nfreqs * self.Ntimes, self.Npols)
         )
-        # print('before square root')
-        # print(self.data_array.real[0, 0, 0])
-        # print(self.data_array.real[0, 0, 3])
-        auto_inds = autos[:, np.newaxis, np.newaxis]
+        auto_inds = autos[:, np.newaxis]
         self.data_array.real[auto_inds, :, pols] = np.sqrt(
             self.data_array.real[auto_inds, :, pols]
         )
-        # print('after square root')
-        # print(self.data_array.real[0, 0, 0])
-        # print(self.data_array.real[0, 0, 3])
 
         for k in autos:
-            print("correcting antenna " + str(k))
+            # print("correcting auto " + str(k))
             # TODO: think about correcting zeros
             # so one weird thing is at low sigma things get rounded up to 0.06
             # don't correct zeros?
 
             flat_array = self.data_array.real[k, :, pols].flatten()
-            # print(flat_array.shape)
             zero_inds = np.where(flat_array != 0)[0]
             sighat_array = flat_array[zero_inds]
 
@@ -628,17 +621,21 @@ class MWACorrFITS(UVData):
         sig1_inds = np.array([0, 0, 3, 3])
         sig2_inds = np.array([0, 3, 0, 3])
         for k in crosses:
-            print("correcting baseline " + str(k))
+            # print("correcting baseline " + str(k))
             auto1 = autos[self.ant_1_array[k]]
+            # print("auto 1: " + str(auto1))
             auto2 = autos[self.ant_2_array[k]]
+            # print("auto 2: " + str(auto2))
             for j in range(self.Nfreqs):
                 # get sigmas
                 sig_1 = self.data_array.real[auto1, :, j, sig1_inds].swapaxes(0, 1)
                 sig_2 = self.data_array.real[auto2, :, j, sig2_inds].swapaxes(0, 1)
                 # print(flat_array.shape)
-                flat_array = np.abs(self.data_array.real[k, :, j, :].flatten())
+                flat_array = self.data_array.real[k, :, j, :].flatten()
+                neg_inds = np.where(flat_array < 0.0)[0]
                 zero_inds = np.where(flat_array != 0)[0]
-                kaphat_array = flat_array[zero_inds]
+                kaphat_array = np.abs(flat_array[zero_inds])
+
                 if len(kaphat_array) > 0:
                     sig_array1 = sig_1.flatten()[zero_inds]
                     sig_array2 = sig_2.flatten()[zero_inds]
@@ -672,15 +669,16 @@ class MWACorrFITS(UVData):
                             > 1e-8
                         )[0]
                         inds = inds[inds2]
-
                     flat_array[zero_inds] = x0 * sig_array1 * sig_array2
+                    flat_array[neg_inds] = np.negative(flat_array[neg_inds])
                     self.data_array.real[k, :, j, :] = flat_array.reshape(
                         self.Ntimes, self.Npols
                     )
 
-                flat_array = np.abs(self.data_array.imag[k, :, j, :].flatten())
+                flat_array = self.data_array.imag[k, :, j, :].flatten()
+                neg_inds = np.where(flat_array < 0.0)[0]
                 zero_inds = np.where(flat_array != 0)[0]
-                kaphat_array = flat_array[zero_inds]
+                kaphat_array = np.abs(flat_array[zero_inds])
                 if len(kaphat_array) > 0:
                     sig_array1 = sig_1.flatten()[zero_inds]
                     sig_array2 = sig_2.flatten()[zero_inds]
@@ -716,14 +714,17 @@ class MWACorrFITS(UVData):
                         inds = inds[inds2]
 
                     flat_array[zero_inds] = x0 * sig_array1 * sig_array2
+                    flat_array[neg_inds] = np.negative(flat_array[neg_inds])
                     self.data_array.imag[k, :, j, :] = flat_array.reshape(
                         self.Ntimes, self.Npols
                     )
+
         # correct xy autos
         for k in autos:
-            print("correcting xy auto " + str(k))
+            # print("correcting xy auto " + str(k))
             for j in range(self.Nfreqs):
                 zero_inds = np.where(self.data_array.real[k, :, j, 1] != 0)[0]
+                neg_inds = np.where(self.data_array.real[k, zero_inds, j, 1] < 0.0)[0]
                 kaphat_array = np.abs(self.data_array.real[k, zero_inds, j, 1])
                 sig_array1 = self.data_array.real[k, zero_inds, j, 0]
                 sig_array2 = self.data_array.real[k, zero_inds, j, 3]
@@ -758,6 +759,7 @@ class MWACorrFITS(UVData):
                             > 1e-8
                         )[0]
                         inds = inds[inds2]
+                    x0[neg_inds] = np.negative(x0[neg_inds])
                     self.data_array.real[k, zero_inds, j, 1] = (
                         x0 * sig_array1 * sig_array2
                     )
@@ -766,9 +768,8 @@ class MWACorrFITS(UVData):
                     )
 
                 zero_inds = np.where(self.data_array.imag[k, :, j, 1] != 0)[0]
-                kaphat_array = np.abs(self.data_array.real[k, zero_inds, j, 1])
-                sig_array1 = self.data_array.real[k, zero_inds, j, 0]
-                sig_array2 = self.data_array.real[k, zero_inds, j, 3]
+                neg_inds = np.where(self.data_array.imag[k, zero_inds, j, 1] < 0.0)[0]
+                kaphat_array = np.abs(self.data_array.imag[k, zero_inds, j, 1])
                 if len(kaphat_array) > 0:
                     x0 = kaphat_array / (sig_array1 * sig_array2)
                     x0 = x0 - (
@@ -800,6 +801,7 @@ class MWACorrFITS(UVData):
                             > 1e-8
                         )[0]
                         inds = inds[inds2]
+                    x0[neg_inds] = np.negative(x0[neg_inds])
                     self.data_array.imag[k, zero_inds, j, 1] = (
                         x0 * sig_array1 * sig_array2
                     )
