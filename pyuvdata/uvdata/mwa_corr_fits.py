@@ -770,6 +770,8 @@ class MWACorrFITS(UVData):
                 zero_inds = np.where(self.data_array.imag[k, :, j, 1] != 0)[0]
                 neg_inds = np.where(self.data_array.imag[k, zero_inds, j, 1] < 0.0)[0]
                 kaphat_array = np.abs(self.data_array.imag[k, zero_inds, j, 1])
+                sig_array1 = self.data_array.real[k, zero_inds, j, 0]
+                sig_array2 = self.data_array.real[k, zero_inds, j, 3]
                 if len(kaphat_array) > 0:
                     x0 = kaphat_array / (sig_array1 * sig_array2)
                     x0 = x0 - (
