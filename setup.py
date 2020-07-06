@@ -67,6 +67,9 @@ if is_platform_mac():
 if is_platform_windows():
     extra_compile_args = ["/Ox", "/openmp"]
     extra_link_args = ["/openmp"]
+elif is_platform_mac():
+    extra_compile_args = ["-O3"]
+    extra_link_args = []
 else:
     extra_compile_args = ["-O3", "-fopenmp"]
     extra_link_args = ["-fopenmp"]
