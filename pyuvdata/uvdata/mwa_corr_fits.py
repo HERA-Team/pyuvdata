@@ -146,21 +146,7 @@ def autos_root_jac(x, sighat):
 
 # @profile
 def corrcorrect_vect_prime(rho, sig1, sig2):
-    i = np.arange(0.5, 7.5, 1)
-    j = np.reshape(i, (1, len(i), 1)) / sig1
-    k = np.reshape(i, (len(i), 1, 1)) / sig2
-    xx = rho
-    # set up summation
-    khat = (1 / (np.pi * np.sqrt(1 - xx ** 2))) * (
-        np.exp(-(1 / (2 * (1 - xx ** 2))) * ((j ** 2) + (k ** 2) - 2 * xx * j * k))
-        + np.exp(-(1 / (2 * (1 - xx ** 2))) * ((j ** 2) + (k ** 2) + 2 * xx * j * k))
-    )
-    # sum over i
-    khat = khat.sum(0)
-    # sum over k
-    khat = khat.sum(0)
-
-    return khat
+    return _corr_fits.get_khat(rho, sig1, sig2)
 
 
 # =============================================================================
@@ -238,23 +224,11 @@ def corr_root_jac(x, kaphat, xsig, ysig):
 
 # @profile
 def corrcorrect_simps(rho, sig1, sig2):
-    i = np.arange(0.5, 7.5, 1)
-    x = np.linspace(0, rho, 11)
-    j = np.reshape(i, (1, len(i), 1, 1)) / sig1
-    k = np.reshape(i, (len(i), 1, 1, 1)) / sig2
-    xx = np.reshape(x, (1, 1, 11, len(rho)))
-    # set up summation
-    khat = (1 / (np.pi * np.sqrt(1 - xx ** 2))) * (
-        np.exp(-(1 / (2 * (1 - xx ** 2))) * ((j ** 2) + (k ** 2) - 2 * xx * j * k))
-        + np.exp(-(1 / (2 * (1 - xx ** 2))) * ((j ** 2) + (k ** 2) + 2 * xx * j * k))
-    )
-    # sum over i
-    khat = khat.sum(0)
-    # sum over k
-    khat = khat.sum(0)
-    # integrate with simps
-    khat = simps(khat, x, axis=0)
-    return khat
+    x = np.linspace(0, rho, 11, dtype=np.float64)
+    khat = np.zeros((11, rho.size), dtype=np.float64)
+    khat = _corr_fits.get_khat(x, sig1, sig2)
+    integrated_khat = simps(khat, x, axis=0)
+    return integrated_khat
 
 
 # =============================================================================

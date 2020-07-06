@@ -11,6 +11,9 @@ import numpy as np
 cimport cython
 cimport numpy
 
+from cython.parallel import prange
+from libc.math cimport exp, pi, sqrt
+
 cpdef dict input_output_mapping():
   """Build a mapping dictionary from pfb input to output numbers."""
   # the polyphase filter bank maps inputs to outputs, which the MWA
@@ -161,3 +164,66 @@ cpdef numpy.ndarray[ndim=1, dtype=numpy.float64_t] get_cable_len_diffs(
     cable_diffs[i] = cable_array[ant2_array[i]] - cable_array[ant1_array[i]]
 
   return np.asarray(cable_diffs)
+
+
+@cython.wraparound(False)
+@cython.boundscheck(False)
+@cython.cdivision(True)
+cdef numpy.ndarray[ndim=2, dtype=numpy.float64_t] _compute_khat(
+  numpy.float64_t[:, ::1] x,
+  numpy.ndarray[ndim=1, dtype=numpy.float64_t] sig1,
+  numpy.ndarray[ndim=1, dtype=numpy.float64_t] sig2,
+):
+
+  cdef numpy.ndarray[ndim=2, dtype=numpy.float64_t] khat = np.zeros((x.shape[0], x.shape[1]), dtype=np.float64)
+
+  cdef numpy.float64_t[:, ::1] _khat = khat
+
+  ind1 = np.arange(0.5, 7.5, 1, dtype=np.float64).reshape(7, 1)
+  cdef numpy.float64_t[:, ::1]  j_ind = ind1 / sig1
+  cdef numpy.float64_t[:, ::1]  k_ind = ind1 / sig2
+
+  cdef Py_ssize_t i, j, k, l
+
+  for i in range(x.shape[0]):
+    if x.shape[1] > 125:
+      for j in prange(x.shape[1], nogil=True):
+        for l in range(k_ind.shape[0]):
+          for k in range(j_ind.shape[0]):
+            _khat[i, j] += (
+              1./ (pi * sqrt( 1 - x[i, j] ** 2)) * (
+                exp(-1. / (2 * (1 - x[i,j] ** 2)) * (j_ind[k, j] ** 2 + k_ind[l, j] ** 2 - 2 * x[i, j] * j_ind[k, j] * k_ind[l,j]))
+                + exp(-1. / (2 * (1 - x[i,j] ** 2)) * (j_ind[k, j] ** 2 + k_ind[l, j] ** 2 + 2 * x[i, j] * j_ind[k, j] * k_ind[l,j]))
+              )
+            )
+    else:
+      for j in range(x.shape[1]):
+        for l in range(k_ind.shape[0]):
+          for k in range(j_ind.shape[0]):
+            _khat[i, j] += (
+              1./ (pi * sqrt( 1 - x[i, j] ** 2)) * (
+                exp(-1. / (2 * (1 - x[i,j] ** 2)) * (j_ind[k, j] ** 2 + k_ind[l, j] ** 2 - 2 * x[i, j] * j_ind[k, j] * k_ind[l,j]))
+                + exp(-1. / (2 * (1 - x[i,j] ** 2)) * (j_ind[k, j] ** 2 + k_ind[l, j] ** 2 + 2 * x[i, j] * j_ind[k, j] * k_ind[l,j]))
+              )
+            )
+
+  return khat
+
+
+cpdef get_khat(rho, sig1, sig2):
+    rho = np.ascontiguousarray(rho, dtype=np.float64)
+    squeeze = False
+    if rho.ndim == 1:
+      squeeze = True
+      rho = rho.reshape(1, -1)
+    sig1 =  np.ascontiguousarray(sig1, dtype=np.float64)
+    sig2 =  np.ascontiguousarray(sig2, dtype=np.float64)
+
+    khat = np.zeros((rho.shape[0], rho.shape[1]), dtype=np.float64)
+    khat = _compute_khat(
+        rho, sig1, sig2
+    )
+
+    if squeeze:
+      khat = khat.squeeze()
+    return khat
