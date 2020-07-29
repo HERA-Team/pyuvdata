@@ -11,7 +11,7 @@ import numpy as np
 cimport cython
 cimport numpy
 
-from cython.parallel import prange
+from cython.parallel import prange, parallel
 from libc.math cimport exp, pi, sqrt
 
 cpdef dict input_output_mapping():
@@ -185,18 +185,20 @@ cdef numpy.ndarray[ndim=2, dtype=numpy.float64_t] _compute_khat(
 
   cdef Py_ssize_t i, j, k, l
 
-  for i in range(x.shape[0]):
-    if x.shape[1] > 125:
-      for j in prange(x.shape[1], nogil=True):
-        for l in range(k_ind.shape[0]):
-          for k in range(j_ind.shape[0]):
-            _khat[i, j] += (
-              1./ (pi * sqrt( 1 - x[i, j] ** 2)) * (
-                exp(-1. / (2 * (1 - x[i,j] ** 2)) * (j_ind[k, j] ** 2 + k_ind[l, j] ** 2 - 2 * x[i, j] * j_ind[k, j] * k_ind[l,j]))
-                + exp(-1. / (2 * (1 - x[i,j] ** 2)) * (j_ind[k, j] ** 2 + k_ind[l, j] ** 2 + 2 * x[i, j] * j_ind[k, j] * k_ind[l,j]))
+  if x.size > 800:
+    with nogil, parallel():
+      for j in prange(x.shape[1]):
+        for i in range(x.shape[0]):
+          for l in range(k_ind.shape[0]):
+            for k in range(j_ind.shape[0]):
+              _khat[i, j] += (
+                1./ (pi * sqrt( 1 - x[i, j] ** 2)) * (
+                  exp(-1. / (2 * (1 - x[i,j] ** 2)) * (j_ind[k, j] ** 2 + k_ind[l, j] ** 2 - 2 * x[i, j] * j_ind[k, j] * k_ind[l,j]))
+                  + exp(-1. / (2 * (1 - x[i,j] ** 2)) * (j_ind[k, j] ** 2 + k_ind[l, j] ** 2 + 2 * x[i, j] * j_ind[k, j] * k_ind[l,j]))
+                )
               )
-            )
-    else:
+  else:
+    for i in range(x.shape[0]):
       for j in range(x.shape[1]):
         for l in range(k_ind.shape[0]):
           for k in range(j_ind.shape[0]):
