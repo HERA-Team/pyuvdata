@@ -6409,6 +6409,7 @@ class UVData(UVBase):
         remove_coarse_band=True,
         correct_cable_len=False,
         correct_van_vleck=False,
+        cheby_approx=True,
         propagate_coarse_flags=True,
         flag_init=True,
         edge_width=80e3,
@@ -6457,6 +6458,9 @@ class UVData(UVBase):
             Option to apply a cable delay correction.
         correct_van_vleck : bool
             Option to apply a van vleck correction.
+        cheby_approx : bool
+            Only used if correct_van_vleck is True. Option to implement the van
+            vleck correction with a chebyshev polynomial approximation.
         propagate_coarse_flags : bool
             Option to propagate flags for missing coarse channel integrations
             across frequency.
@@ -6544,6 +6548,7 @@ class UVData(UVBase):
             remove_coarse_band=remove_coarse_band,
             correct_cable_len=correct_cable_len,
             correct_van_vleck=correct_van_vleck,
+            cheby_approx=cheby_approx,
             propagate_coarse_flags=propagate_coarse_flags,
             flag_init=flag_init,
             edge_width=edge_width,
@@ -6930,6 +6935,7 @@ class UVData(UVBase):
         remove_coarse_band=True,
         correct_cable_len=False,
         correct_van_vleck=False,
+        cheby_approx=True,
         propagate_coarse_flags=True,
         flag_init=True,
         edge_width=80e3,
@@ -7103,6 +7109,10 @@ class UVData(UVBase):
         correct_van_vleck : bool
             Flag to apply a van vleck correction. Only used if file_type is
             'mwa_corr_fits'.
+        cheby_approx : bool
+            Only used if file_type is 'mwa_corr_fits' and correct_van_vleck is True.
+            Option to implement the van vleck correction with a chebyshev polynomial
+            approximation. Set to False to run the integral version of the correction.
         propogate_coarse_flags : bool
             Option to propogate flags for missing coarse channel integrations
             across frequency. Only used if file_type is 'mwa_corr_fits'.
@@ -7587,6 +7597,7 @@ class UVData(UVBase):
                     remove_coarse_band=remove_coarse_band,
                     correct_cable_len=correct_cable_len,
                     correct_van_vleck=correct_van_vleck,
+                    cheby_approx=cheby_approx,
                     propagate_coarse_flags=propagate_coarse_flags,
                     flag_init=flag_init,
                     edge_width=edge_width,
