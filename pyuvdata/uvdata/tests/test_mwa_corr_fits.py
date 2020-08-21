@@ -802,8 +802,8 @@ def test_input_output_mapping():
 
 @pytest.mark.filterwarnings("ignore:telescope_location is not set. ")
 @pytest.mark.filterwarnings("ignore:some coarse channel files were not submitted")
-def test_van_vleck_int():
-    """Test integral version of van vleck correction."""
+def test_van_vleck():
+    """Test van vleck correction."""
 
     uv1 = UVData()
     uv1.read(
@@ -811,7 +811,6 @@ def test_van_vleck_int():
         data_array_dtype=np.complex128,
         flag_init=False,
         correct_van_vleck=True,
-        cheby_approx=False,
     )
 
     # read in file corrected using integrate.quad with 1e-10 precision
