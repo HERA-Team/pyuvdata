@@ -811,8 +811,9 @@ def test_van_vleck():
         data_array_dtype=np.complex128,
         flag_init=False,
         correct_van_vleck=True,
+        remove_dig_gains=False,
+        remove_coarse_band=False,
     )
-
     # read in file corrected using integrate.quad with 1e-10 precision
     uv2 = UVData()
     uv2.read(filelist[10])
