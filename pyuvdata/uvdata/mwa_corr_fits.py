@@ -6,6 +6,7 @@
 import warnings
 import itertools
 import numpy as np
+import scipy
 from astropy.io import fits
 from astropy.time import Time
 from astropy import constants as const
@@ -46,11 +47,8 @@ def sighat_vector(x):
     ----------
     x : numpy array
         Array of sigma inputs into the inverse correction function.
-    bits : int
-        Number of quantization bits.
     """
     # assign the upper level of the quantization
-    # m = 2 ** (bits - 1) - 1
     m = 7
     # create an array
     y = np.arange(m)
@@ -66,9 +64,7 @@ def sighat_vector(x):
 
 
 def sighat_vector_prime(x):
-    # this is not actually the full derivative; have to divide by sighat_vector
     # assign the upper level of the quantization
-    # m = 2 ** (nbits - 1) - 1
     m = 7
     # create an array
     y = np.arange(m)
@@ -81,110 +77,15 @@ def sighat_vector_prime(x):
         * np.exp(-((yy + 0.5) ** 2) / (2 * (x ** 2)))
         / (np.sqrt(2 * np.pi) * (x ** 2))
     )
-    # print(z.shape)
     # sum terms
     sighat_prime = z.sum(axis=0)
+    sighat_prime = sighat_prime / sighat_vector(x)
     return sighat_prime
 
 
 # @profile
-def autos_opt_func(x, sighat):
-    return sighat_vector(x) - sighat
-
-
-def autos_opt_func_prime(x):
-    return sighat_vector_prime(x) / sighat_vector(x)
-
-
-def autos_root_jac(x, sighat):
-    return np.diag(sighat_vector_prime(x) / sighat_vector(x))
-
-
-# =============================================================================
-# @profile
-# def corrcorrect_vect(rho, bits, xsig, ysig):
-#     """Generate quantized covariance from correlation and sigma inputs."""
-#     # create an integration grid for midpoint summation
-#     x = np.array([np.arange(i / (2 * 10000), i, i / 10000) for i in rho])
-#     x = np.transpose(x)
-#     # assign the upper level of the quantization
-#     m = 2 ** (bits - 1) - 1
-#     # create variable for summation
-#     i = np.arange(0, m, 1)
-#     ii = np.reshape(i, (1, len(i), 1, 1))
-#     kk = np.reshape(i, (len(i), 1, 1, 1))
-#     xx = np.reshape(x, (1, 1, x.shape[0], x.shape[1]))
-#     # set up summation in integrand
-#     z = (1 / (np.pi * np.sqrt(1 - xx ** 2))) * (
-#         np.exp(
-#             -(1 / (2 * (1 - xx ** 2)))
-#             * (
-#                 ((ii + 0.5) ** 2 / xsig ** 2)
-#                 + ((kk + 0.5) ** 2 / ysig ** 2)
-#                 - 2 * xx * (ii + 0.5) * (kk + 0.5) / (xsig * ysig)
-#             )
-#         )
-#         + np.exp(
-#             -(1 / (2 * (1 - xx ** 2)))
-#             * (
-#                 ((ii + 0.5) ** 2 / xsig ** 2)
-#                 + ((kk + 0.5) ** 2 / ysig ** 2)
-#                 + 2 * xx * (ii + 0.5) * (kk + 0.5) / (xsig * ysig)
-#             )
-#         )
-#     )
-#     # sum over integration variable
-#     z = z.sum(2)
-#     # sum over i
-#     z = z.sum(0)
-#     # sum over k
-#     z = z.sum(0)
-#     # multiply by width for midpoint Riemann sum
-#     result = z * rho / 10000
-#     return result
-# =============================================================================
-
-# @profile
 def corrcorrect_vect_prime(rho, sig1, sig2):
     return _corr_fits.get_khat(rho, sig1, sig2)
-
-
-# =============================================================================
-# @profile
-# def corrcorrect_vect_prime(rho, xsig, ysig):
-#     # assign the upper level of the quantization
-#     # m = 2 ** (bits - 1) - 1
-#     # create variables for summation
-#     i = np.arange(0.5, 7.5, 1)
-#     # ii, kk, xx = np.meshgrid(i, i, rho, sparse=True)
-#     ii = np.reshape(i, (1, len(i), 1))
-#     kk = np.reshape(i, (len(i), 1, 1))
-#     xx = rho
-#     # set up summation
-#     z = (1 / (np.pi * np.sqrt(1 - xx ** 2))) * (
-#         np.exp(
-#             -(1 / (2 * (1 - xx ** 2)))
-#             * (
-#                 (ii ** 2 / xsig ** 2)
-#                 + (kk ** 2 / ysig ** 2)
-#                 - 2 * xx * ii * kk / (xsig * ysig)
-#             )
-#         )
-#         + np.exp(
-#             -(1 / (2 * (1 - xx ** 2)))
-#             * (
-#                 (ii ** 2 / xsig ** 2)
-#                 + (kk ** 2 / ysig ** 2)
-#                 + 2 * xx * ii * kk / (xsig * ysig)
-#             )
-#         )
-#     )
-#     # sum over i
-#     z = z.sum(0)
-#     # sum over k
-#     z = z.sum(0)
-#     return z
-# =============================================================================
 
 
 # @profile
@@ -199,30 +100,6 @@ def corrcorrect_quad(rho, bits, xsig, ysig):
 
 
 # @profile
-def corr_root_func(x, kaphat, sig1, sig2):
-    return corrcorrect_quad(x, 4, sig1, sig2) - kaphat
-
-
-# @profile
-def corr_root_jac(x, kaphat, xsig, ysig):
-    # assign the upper level of the quantization
-    m = 2 ** (4 - 1) - 1
-    # create variables for summation
-    i = np.arange(0, m, 1)
-    ii = np.reshape(i, (1, len(i), 1))
-    kk = np.reshape(i, (len(i), 1, 1))
-    xsig = np.reshape(xsig, (1, 1, len(xsig)))
-    z = (
-        2
-        * (np.exp(-(((ii + 0.5) ** 2 / xsig ** 2) + ((kk + 0.5) ** 2 / ysig ** 2)) / 2))
-        / (np.pi)
-    )
-    z = z.sum(0)
-    z = z.sum(0)
-    return np.diag(z)
-
-
-# @profile
 def corrcorrect_simps(rho, sig1, sig2):
     x = np.linspace(0, rho, 11, dtype=np.float64)
     khat = np.zeros((11, rho.size), dtype=np.float64)
@@ -231,130 +108,103 @@ def corrcorrect_simps(rho, sig1, sig2):
     return integrated_khat
 
 
-# =============================================================================
-# @profile
-# def corrcorrect_simps(rho, xsig, ysig):
-#     # assign the upper level of the quantization
-#     # m = 2 ** (bits - 1) - 1
-#     # create variables for summation
-#     i = np.arange(0.5, 7.5, 1)
-#     x = np.linspace(0, rho, 101)
-#     ii = np.reshape(i, (1, len(i), 1, 1))
-#     kk = np.reshape(i, (len(i), 1, 1, 1))
-#     xx = np.reshape(x, (1, 1, 101, len(rho)))
-#     # set up summation
-#     z = (1 / (np.pi * np.sqrt(1 - xx ** 2))) * (
-#         np.exp(
-#             -(1 / (2 * (1 - xx ** 2)))
-#             * (
-#                 (ii ** 2 / xsig ** 2)
-#                 + (kk ** 2 / ysig ** 2)
-#                 - 2 * xx * ii * kk / (xsig * ysig)
-#             )
-#         )
-#         + np.exp(
-#             -(1 / (2 * (1 - xx ** 2)))
-#             * (
-#                 (ii ** 2 / xsig ** 2)
-#                 + (kk ** 2 / ysig ** 2)
-#                 + 2 * xx * ii * kk / (xsig * ysig)
-#             )
-#         )
-#     )
-#     # sum over i
-#     z = z.sum(0)
-#     # sum over k
-#     z = z.sum(0)
-#     z = simps(z, x, axis=0)
-#     return z
-# =============================================================================
-
-# @profile
-def corr_root_func_simps(x, kaphat, sig1, sig2):
-    return corrcorrect_simps(x, sig1, sig2) - kaphat
-
-
-# @profile
-def corrcorrect_approx_taylor(rho, sig1, sig2):
-    a = np.arange(-6.5, 7.5, 1.0)
-    # reshape
-    aa = np.reshape(a, (len(a), 1, 1)) / sig1
-    # print(aa.shape)
-    bb = np.reshape(a, (1, len(a), 1)) / sig2
-    # print(bb.shape)
-    xx = np.reshape(rho, (1, 1, len(rho)))
-    khat = (
-        (1 / (2 * np.pi)) * np.exp(-(aa ** 2 + bb ** 2) / 2) * (xx + aa * bb * xx ** 2)
-    )
-    khat = khat.sum(0)
-    khat = khat.sum(0)
-    return khat
-
-
-# @profile
-def corr_root_func_approx_taylor(x, kaphat, sig1, sig2):
-    return corrcorrect_approx_taylor(x, sig1, sig2) - kaphat
-
-
-# @profile
-def corr_root_jac_taylor(x, kaphat, sig1, sig2):
-    a = np.arange(-6.5, 7.5, 1.0)
-    # reshape
-    aa = np.reshape(a, (len(a), 1, 1)) / sig1
-    # print(aa.shape)
-    bb = np.reshape(a, (1, len(a), 1)) / sig2
-    # print(bb.shape)
-    xx = np.reshape(x, (1, 1, len(x)))
-    khat = (1 / (2 * np.pi)) * np.exp(-(aa ** 2 + bb ** 2) / 2) * (1 + aa * bb * xx * 2)
-    khat = khat.sum(0)
-    khat = khat.sum(0)
-    return np.diag(khat)
-
-
-# @profile
-def corrcorrect_approx_integrand(rho, sig1, sig2):
-    a = np.arange(-6.5, 7.5, 1.0)
-    # reshape
-    aa = np.reshape(a, (len(a), 1, 1)) / sig1
-    # print(aa.shape)
-    bb = np.reshape(a, (1, len(a), 1)) / sig2
-    # print(bb.shape)
-    xx = np.reshape(rho, (1, 1, len(rho)))
-    # print(xx.shape)
-    khat = (
-        (1 / (4 * np.pi * (aa ** 2 + bb ** 2) ** (5 / 2)))
-        * np.exp((-(aa ** 2 + bb ** 2) / 2))
-        * (
-            np.sqrt(aa ** 2 + bb ** 2) * aa * bb
-            - np.sqrt(aa ** 2 + bb ** 2)
-            * (aa * bb + xx * (aa ** 2 + bb ** 2))
-            * np.exp(-(aa ** 2 + bb ** 2) * (xx ** 2) / 2 + aa * bb * xx)
-            + np.sqrt(np.pi / 2)
-            * (2 * (aa ** 4 + bb ** 4) + aa ** 2 + bb ** 2 + 5 * aa ** 2 * bb ** 2)
-            * np.exp(aa ** 2 * bb ** 2 / (2 * (aa ** 2 + bb ** 2)))
-            * (
-                erf(
-                    (-aa * bb + xx * (aa ** 2 + bb ** 2))
-                    / np.sqrt(2 * (aa ** 2 + bb ** 2))
-                )
-                - erf(-aa * bb / np.sqrt(2 * (aa ** 2 + bb ** 2)))
+def van_vleck_autos(sig_arr):
+    """Use Newton's method to solve the van vleck function for auto-correlations."""
+    zero_inds = np.where(sig_arr != 0)[0]
+    sighat = sig_arr[zero_inds]
+    if len(sighat) > 0:
+        guess = np.copy(sighat)
+        inds = np.where(np.abs(sighat_vector(guess) - sighat) > 1e-10)[0]
+        while len(inds) != 0:
+            guess[inds] = guess[inds] - (
+                (sighat_vector(guess[inds]) - sighat[inds])
+                / sighat_vector_prime(guess[inds])
             )
-        )
-    )
-    khat = khat.sum(0)
-    khat = khat.sum(0)
+            inds = np.where(np.abs(sighat_vector(guess) - sighat) > 1e-10)[0]
+        sig_arr[zero_inds] = guess
+
+    return sig_arr
+
+
+# @profile
+def van_vleck_crosses_int(k_arr, sig1_arr, sig2_arr):
+    """Use Newton's method to solve the Van Vleck integral for cross-correlations."""
+    zero_inds = np.where(k_arr != 0)[0]
+    neg_inds = np.where(k_arr < 0.0)[0]
+    khat = np.abs(k_arr[zero_inds])
+    sig1 = sig1_arr[zero_inds]
+    sig2 = sig2_arr[zero_inds]
+    if len(khat) > 0.0:
+        x0 = khat / (sig1 * sig2)
+        corr = corrcorrect_simps(x0, sig1, sig2) - khat
+        x0 = x0 - (corr / corrcorrect_vect_prime(x0, sig1, sig2))
+        inds = np.where(np.abs(corr) > 1e-8)[0]
+        while len(inds) != 0:
+            corr = corrcorrect_simps(x0[inds], sig1[inds], sig2[inds]) - khat[inds]
+            x0[inds] = x0[inds] - (
+                corr / corrcorrect_vect_prime(x0[inds], sig1[inds], sig2[inds])
+            )
+            inds2 = np.where(np.abs(corr) > 1e-8)[0]
+            inds = inds[inds2]
+        k_arr[zero_inds] = x0 * sig1 * sig2
+        k_arr[neg_inds] = np.negative(k_arr[neg_inds])
+
+    return k_arr
+
+
+# =============================================================================
+# # @profile
+# def van_vleck_crosses_cheby(khat, sig1, sig2, spline1, spline3, spline5):
+#     """Use a Chebyshev polynomial approximation of the van vleck integral."""
+#     zero_inds = np.where(np.logical_and(sig1 != 0.0, sig2 != 0.0))[0]
+#     coef = np.zeros((len(sig1[zero_inds]), 6))
+#     coef[:, 1] = spline1.ev(sig1[zero_inds], sig2[zero_inds])
+#     coef[:, 3] = spline3.ev(sig1[zero_inds], sig2[zero_inds])
+#     coef[:, 5] = spline5.ev(sig1[zero_inds], sig2[zero_inds])
+#     rho_r = np.polynomial.chebyshev.chebval(
+#                                             khat.real[zero_inds],
+#                                             np.transpose(coef),
+#                                             tensor=False,
+#                                             )
+#     rho_i = np.polynomial.chebyshev.chebval(
+#                                             khat.imag[zero_inds],
+#                                             np.transpose(coef),
+#                                             tensor=False,
+#                                             )
+#     khat.real[zero_inds] = rho_r * sig1[zero_inds] * sig2[zero_inds]
+#     khat.imag[zero_inds] = rho_i * sig1[zero_inds] * sig2[zero_inds]
+#
+#     return khat
+# =============================================================================
+
+
+# @profile
+def cheby_func(k, t1, t3, t5):
+    """
+    Evaluate a third-order odd Chebyshev polynomial.
+
+    Takes in a set of data and the three coefficients to apply to each data point.
+    All inputs expected to be the same length.
+    """
+    return k * t1 + (4 * k ** 3 - 3 * k) * t3 + (16 * k ** 5 - 20 * k ** 3 + 5 * k) * t5
+
+
+# @profile
+def van_vleck_crosses_cheby(khat, sig1, sig2, spline1, spline3, spline5):
+    """Use a Chebyshev polynomial approximation of the Van Vleck integral."""
+    zero_inds = np.where(np.logical_and(sig1 != 0.0, sig2 != 0.0))[0]
+    # interpolate
+    t1 = spline1.ev(sig1[zero_inds], sig2[zero_inds])
+    t3 = spline3.ev(sig1[zero_inds], sig2[zero_inds])
+    t5 = spline5.ev(sig1[zero_inds], sig2[zero_inds])
+    # get rho
+    # if real and imaginary are not corrected separately, precision is lost
+    rho_r = cheby_func(khat.real[zero_inds], t1, t3, t5)
+    rho_i = cheby_func(khat.imag[zero_inds], t1, t3, t5)
+    # get kappa
+    khat[zero_inds] = (rho_r + 1j * rho_i) * sig1[zero_inds] * sig2[zero_inds]
+
     return khat
-
-
-# @profile
-def corr_root_func_approx_integrand(x, kaphat, sig1, sig2):
-    return corrcorrect_approx_integrand(x, sig1, sig2) - kaphat
-
-
-# @profile
-# this one requires more integral evaluations
-def corr_root_jac2(x, kaphat, sig1, sig2):
-    return np.diag(sig1 * sig2)
 
 
 class MWACorrFITS(UVData):
@@ -531,8 +381,21 @@ class MWACorrFITS(UVData):
         return
 
     # @profile
-    def van_vleck_correction(self):
+    def van_vleck_correction(self, cheby_approx, data_array_dtype):
         """Apply a van vleck correction to the data array."""
+        # need data array to have 64 bit precision
+        if self.data_array.dtype != np.complex128:
+            self.data_array = self.data_array.astype(np.complex128)
+        # scale the data
+        # number of samples per fine channel is equal to channel width (Hz)
+        # multiplied be the integration time (s)
+        nsamples = self.channel_width * self.integration_time[0]
+        # cast data to ints
+        self.data_array = np.rint(self.data_array / self.extra_keywords["SCALEFAC"])
+        # take advantage of cicular polarization! divide by two
+        self.data_array = self.data_array / (nsamples * 2.0)
+        # reshape to (nbls, ntimes, nfreqs, npols)
+        self.data_array = np.swapaxes(self.data_array, 0, 1)
         # get indices for autos
         autos = np.where(
             self.ant_1_array[0 : self.Nbls] == self.ant_2_array[0 : self.Nbls]
@@ -541,254 +404,129 @@ class MWACorrFITS(UVData):
         crosses = np.where(
             self.ant_1_array[0 : self.Nbls] != self.ant_2_array[0 : self.Nbls]
         )[0]
-        # generate dict for getting auto pols
-        # polarizations are ordered yy, yx, xy, xx
-        # TODO: generalize this for any polarization ordering
-        # pol_dict = {0: (0, 0), 1: (0, 3), 2: (3, 0), 3: (3, 3)}
-
-        # correct xx and yy autos
+        # assumption: polarizations are ordered yy, yx, xy, xx
+        # TODO: generalize this for any polarization ordering?
         pols = np.array([0, 3])
-        # combine axes for speed-up
+        # combine axes
         self.data_array = self.data_array.reshape(
             (self.Nbls, self.Nfreqs * self.Ntimes, self.Npols)
         )
+        # square root autos
         auto_inds = autos[:, np.newaxis]
         self.data_array.real[auto_inds, :, pols] = np.sqrt(
             self.data_array.real[auto_inds, :, pols]
         )
-
-        for k in autos:
-            # print("correcting auto " + str(k))
-            # TODO: think about correcting zeros
-            # so one weird thing is at low sigma things get rounded up to 0.06
-            # don't correct zeros?
-
-            flat_array = self.data_array.real[k, :, pols].flatten()
-            zero_inds = np.where(flat_array != 0)[0]
-            sighat_array = flat_array[zero_inds]
-
-            if len(sighat_array) > 0:
-                guess = np.copy(sighat_array)
-                inds = np.where(np.abs(autos_opt_func(guess, sighat_array)) > 1e-8)[0]
-                # print(len(inds))
-                while len(inds) != 0:
-                    # print(len(inds))
-                    # print(guess[inds][0:10])
-                    # print(autos_opt_func(guess[inds],sighat_array[inds])[0:10])
-                    # print(autos_opt_func_prime(guess[inds])[0:10])
-                    guess[inds] = guess[inds] - (
-                        (sighat_vector(guess[inds]) - sighat_array[inds])
-                        * sighat_vector(guess[inds])
-                        / sighat_vector_prime(guess[inds])
-                    )
-                    inds = np.where(np.abs(sighat_vector(guess) - sighat_array) > 1e-8)[
-                        0
-                    ]
-                flat_array[zero_inds] = guess
-                self.data_array.real[k, :, pols] = flat_array.reshape(
-                    2, self.Ntimes * self.Nfreqs
-                )
-
-        # add back in frequency axis
-        self.data_array = self.data_array.reshape(
-            (self.Nbls, self.Ntimes, self.Nfreqs, self.Npols)
+        # correct autos
+        sighat = self.data_array.real[auto_inds, :, pols].flatten()
+        sigma = van_vleck_autos(sighat)
+        self.data_array.real[auto_inds, :, pols] = sigma.reshape(
+            len(autos), 2, self.Ntimes * self.Nfreqs
         )
-        sig1_inds = np.array([0, 0, 3, 3])
-        sig2_inds = np.array([0, 3, 0, 3])
-        for k in crosses:
-            # print("correcting baseline " + str(k))
-            auto1 = autos[self.ant_1_array[k]]
-            # print("auto 1: " + str(auto1))
-            auto2 = autos[self.ant_2_array[k]]
-            # print("auto 2: " + str(auto2))
-            for j in range(self.Nfreqs):
-                # get sigmas
-                sig_1 = self.data_array.real[auto1, :, j, sig1_inds].swapaxes(0, 1)
-                sig_2 = self.data_array.real[auto2, :, j, sig2_inds].swapaxes(0, 1)
-                # print(flat_array.shape)
-                flat_array = self.data_array.real[k, :, j, :].flatten()
-                neg_inds = np.where(flat_array < 0.0)[0]
-                zero_inds = np.where(flat_array != 0)[0]
-                kaphat_array = np.abs(flat_array[zero_inds])
+        # correct crosses
+        if cheby_approx:
+            # load in interpolation files
+            with open(DATA_PATH + "/mwa_config_data/Chebychev_coeff.npy", "rb") as f:
+                rhoC = np.load(f)
+            with open(DATA_PATH + "/mwa_config_data/sigma1.npy", "rb") as f:
+                sig_vec = np.load(f)
+            spline1 = scipy.interpolate.RectBivariateSpline(
+                sig_vec, sig_vec, rhoC[:, :, 1]
+            )
+            spline3 = scipy.interpolate.RectBivariateSpline(
+                sig_vec, sig_vec, rhoC[:, :, 3]
+            )
+            spline5 = scipy.interpolate.RectBivariateSpline(
+                sig_vec, sig_vec, rhoC[:, :, 5]
+            )
+            # get indices for sigmas for crosses
+            sig1_inds = autos[self.ant_1_array][crosses][:, np.newaxis]
+            sig2_inds = autos[self.ant_2_array][crosses][:, np.newaxis]
+            # get data
+            sig1 = self.data_array.real[sig1_inds, :, np.array([0, 0, 3, 3])].flatten()
+            sig2 = self.data_array.real[sig2_inds, :, np.array([0, 3, 0, 3])].flatten()
+            khat = self.data_array[
+                crosses[:, np.newaxis], :, np.array([0, 1, 2, 3])
+            ].flatten()
+            # correct
+            kap = van_vleck_crosses_cheby(khat, sig1, sig2, spline1, spline3, spline5)
+            self.data_array[
+                crosses[:, np.newaxis], :, np.array([0, 1, 2, 3])
+            ] = kap.reshape(len(crosses), self.Npols, self.Ntimes * self.Nfreqs)
 
-                if len(kaphat_array) > 0:
-                    sig_array1 = sig_1.flatten()[zero_inds]
-                    sig_array2 = sig_2.flatten()[zero_inds]
-                    x0 = kaphat_array / (sig_array1 * sig_array2)
-                    x0 = x0 - (
-                        corrcorrect_simps(x0, sig_array1, sig_array2) - kaphat_array
-                    ) / corrcorrect_vect_prime(x0, sig_array1, sig_array2)
-                    inds = np.where(
-                        np.abs(
-                            corrcorrect_simps(x0, sig_array1, sig_array2) - kaphat_array
-                        )
-                        > 1e-8
-                    )[0]
-                    while len(inds) != 0:
-                        # print(len(inds))
-                        x0[inds] = x0[inds] - (
-                            corrcorrect_simps(
-                                x0[inds], sig_array1[inds], sig_array2[inds]
-                            )
-                            - kaphat_array[inds]
-                        ) / corrcorrect_vect_prime(
-                            x0[inds], sig_array1[inds], sig_array2[inds]
-                        )
-                        inds2 = np.where(
-                            np.abs(
-                                corrcorrect_simps(
-                                    x0[inds], sig_array1[inds], sig_array2[inds]
-                                )
-                                - kaphat_array[inds]
-                            )
-                            > 1e-8
-                        )[0]
-                        inds = inds[inds2]
-                    flat_array[zero_inds] = x0 * sig_array1 * sig_array2
-                    flat_array[neg_inds] = np.negative(flat_array[neg_inds])
-                    self.data_array.real[k, :, j, :] = flat_array.reshape(
+            # correct xy autos
+            # get data
+            sig1 = self.data_array.real[autos, :, 0].flatten()
+            sig2 = self.data_array.real[autos, :, 3].flatten()
+            khat = self.data_array[autos, :, 1].flatten()
+            # correct
+            kap = van_vleck_crosses_cheby(khat, sig1, sig2, spline1, spline3, spline5)
+            self.data_array[autos, :, 1] = kap.reshape(
+                len(autos), self.Ntimes * self.Nfreqs
+            )
+            self.data_array[autos, :, 2] = np.conj(
+                kap.reshape(len(autos), self.Ntimes * self.Nfreqs)
+            )
+
+            # add back in frequency axis
+            self.data_array = self.data_array.reshape(
+                (self.Nbls, self.Ntimes, self.Nfreqs, self.Npols)
+            )
+
+        else:
+            # add back in frequency axis
+            self.data_array = self.data_array.reshape(
+                (self.Nbls, self.Ntimes, self.Nfreqs, self.Npols)
+            )
+            for k in crosses:
+                auto1 = autos[self.ant_1_array[k]]
+                auto2 = autos[self.ant_2_array[k]]
+                for j in range(self.Nfreqs):
+                    # get data
+                    sig1 = self.data_array.real[
+                        auto1, :, j, np.array([0, 0, 3, 3])
+                    ].flatten()
+                    sig2 = self.data_array.real[
+                        auto2, :, j, np.array([0, 3, 0, 3])
+                    ].flatten()
+                    khat = self.data_array[k, :, j, np.array([0, 1, 2, 3])].flatten()
+                    # correct real
+                    kap = van_vleck_crosses_int(khat.real, sig1, sig2)
+                    self.data_array.real[k, :, j, :] = kap.reshape(
                         self.Ntimes, self.Npols
                     )
-
-                flat_array = self.data_array.imag[k, :, j, :].flatten()
-                neg_inds = np.where(flat_array < 0.0)[0]
-                zero_inds = np.where(flat_array != 0)[0]
-                kaphat_array = np.abs(flat_array[zero_inds])
-                if len(kaphat_array) > 0:
-                    sig_array1 = sig_1.flatten()[zero_inds]
-                    sig_array2 = sig_2.flatten()[zero_inds]
-                    x0 = kaphat_array / (sig_array1 * sig_array2)
-                    x0 = x0 - (
-                        corrcorrect_simps(x0, sig_array1, sig_array2) - kaphat_array
-                    ) / corrcorrect_vect_prime(x0, sig_array1, sig_array2)
-                    inds = np.where(
-                        np.abs(
-                            corrcorrect_simps(x0, sig_array1, sig_array2) - kaphat_array
-                        )
-                        > 1e-8
-                    )[0]
-                    while len(inds) != 0:
-                        # print(len(inds))
-                        x0[inds] = x0[inds] - (
-                            corrcorrect_simps(
-                                x0[inds], sig_array1[inds], sig_array2[inds]
-                            )
-                            - kaphat_array[inds]
-                        ) / corrcorrect_vect_prime(
-                            x0[inds], sig_array1[inds], sig_array2[inds]
-                        )
-                        inds2 = np.where(
-                            np.abs(
-                                corrcorrect_simps(
-                                    x0[inds], sig_array1[inds], sig_array2[inds]
-                                )
-                                - kaphat_array[inds]
-                            )
-                            > 1e-8
-                        )[0]
-                        inds = inds[inds2]
-
-                    flat_array[zero_inds] = x0 * sig_array1 * sig_array2
-                    flat_array[neg_inds] = np.negative(flat_array[neg_inds])
-                    self.data_array.imag[k, :, j, :] = flat_array.reshape(
+                    # correct imaginary
+                    kap = van_vleck_crosses_int(khat.imag, sig1, sig2)
+                    self.data_array.imag[k, :, j, :] = kap.reshape(
                         self.Ntimes, self.Npols
                     )
-
-        # correct xy autos
-        for k in autos:
-            # print("correcting xy auto " + str(k))
-            for j in range(self.Nfreqs):
-                zero_inds = np.where(self.data_array.real[k, :, j, 1] != 0)[0]
-                neg_inds = np.where(self.data_array.real[k, zero_inds, j, 1] < 0.0)[0]
-                kaphat_array = np.abs(self.data_array.real[k, zero_inds, j, 1])
-                sig_array1 = self.data_array.real[k, zero_inds, j, 0]
-                sig_array2 = self.data_array.real[k, zero_inds, j, 3]
-                if len(kaphat_array) > 0:
-                    x0 = kaphat_array / (sig_array1 * sig_array2)
-                    x0 = x0 - (
-                        corrcorrect_simps(x0, sig_array1, sig_array2) - kaphat_array
-                    ) / corrcorrect_vect_prime(x0, sig_array1, sig_array2)
-                    inds = np.where(
-                        np.abs(
-                            corrcorrect_simps(x0, sig_array1, sig_array2) - kaphat_array
-                        )
-                        > 1e-8
-                    )[0]
-                    while len(inds) != 0:
-                        # print(len(inds))
-                        x0[inds] = x0[inds] - (
-                            corrcorrect_simps(
-                                x0[inds], sig_array1[inds], sig_array2[inds]
-                            )
-                            - kaphat_array[inds]
-                        ) / corrcorrect_vect_prime(
-                            x0[inds], sig_array1[inds], sig_array2[inds]
-                        )
-                        inds2 = np.where(
-                            np.abs(
-                                corrcorrect_simps(
-                                    x0[inds], sig_array1[inds], sig_array2[inds]
-                                )
-                                - kaphat_array[inds]
-                            )
-                            > 1e-8
-                        )[0]
-                        inds = inds[inds2]
-                    x0[neg_inds] = np.negative(x0[neg_inds])
-                    self.data_array.real[k, zero_inds, j, 1] = (
-                        x0 * sig_array1 * sig_array2
-                    )
-                    self.data_array.real[k, zero_inds, j, 2] = (
-                        x0 * sig_array1 * sig_array2
-                    )
-
-                zero_inds = np.where(self.data_array.imag[k, :, j, 1] != 0)[0]
-                neg_inds = np.where(self.data_array.imag[k, zero_inds, j, 1] < 0.0)[0]
-                kaphat_array = np.abs(self.data_array.imag[k, zero_inds, j, 1])
-                sig_array1 = self.data_array.real[k, zero_inds, j, 0]
-                sig_array2 = self.data_array.real[k, zero_inds, j, 3]
-                if len(kaphat_array) > 0:
-                    x0 = kaphat_array / (sig_array1 * sig_array2)
-                    x0 = x0 - (
-                        corrcorrect_simps(x0, sig_array1, sig_array2) - kaphat_array
-                    ) / corrcorrect_vect_prime(x0, sig_array1, sig_array2)
-                    inds = np.where(
-                        np.abs(
-                            corrcorrect_simps(x0, sig_array1, sig_array2) - kaphat_array
-                        )
-                        > 1e-8
-                    )[0]
-                    while len(inds) != 0:
-                        # print(len(inds))
-                        x0[inds] = x0[inds] - (
-                            corrcorrect_simps(
-                                x0[inds], sig_array1[inds], sig_array2[inds]
-                            )
-                            - kaphat_array[inds]
-                        ) / corrcorrect_vect_prime(
-                            x0[inds], sig_array1[inds], sig_array2[inds]
-                        )
-                        inds2 = np.where(
-                            np.abs(
-                                corrcorrect_simps(
-                                    x0[inds], sig_array1[inds], sig_array2[inds]
-                                )
-                                - kaphat_array[inds]
-                            )
-                            > 1e-8
-                        )[0]
-                        inds = inds[inds2]
-                    x0[neg_inds] = np.negative(x0[neg_inds])
-                    self.data_array.imag[k, zero_inds, j, 1] = (
-                        x0 * sig_array1 * sig_array2
-                    )
-                    self.data_array.imag[k, zero_inds, j, 2] = -(
-                        x0 * sig_array1 * sig_array2
-                    )
-
+            # correct xy autos
+            for k in autos:
+                for j in range(self.Nfreqs):
+                    # get data
+                    sig1 = self.data_array.real[k, :, j, 0]
+                    sig2 = self.data_array.real[k, :, j, 3]
+                    khat = self.data_array[k, :, j, 1]
+                    # correct real
+                    kap = van_vleck_crosses_int(khat.real, sig1, sig2)
+                    self.data_array.real[k, :, j, 1] = kap
+                    self.data_array.real[k, :, j, 2] = kap
+                    # correct imaginary
+                    kap = van_vleck_crosses_int(khat.imag, sig1, sig2)
+                    self.data_array.imag[k, :, j, 1] = kap
+                    self.data_array.imag[k, :, j, 2] = np.negative(kap)
+        # square autos
         self.data_array.real[auto_inds, :, :, pols] = (
             self.data_array.real[auto_inds, :, :, pols] ** 2
         )
+        # reshape to (ntimes, nbls, nfreqs, npols)
+        self.data_array = np.swapaxes(self.data_array, 0, 1)
+        # rescale the data
+        self.data_array = self.data_array * (
+            self.extra_keywords["SCALEFAC"] * nsamples * 2
+        )
+        # return data array to desired precision
+        if self.data_array.dtype != data_array_dtype:
+            self.data_array = self.data_array.astype(data_array_dtype)
 
     # @profile
     def read_mwa_corr_fits(
@@ -799,6 +537,7 @@ class MWACorrFITS(UVData):
         remove_coarse_band=True,
         correct_cable_len=False,
         correct_van_vleck=False,
+        cheby_approx=True,
         phase_to_pointing_center=False,
         propagate_coarse_flags=True,
         flag_init=True,
@@ -848,6 +587,9 @@ class MWACorrFITS(UVData):
             Option to apply a cable delay correction.
         correct_van_vleck : bool
             Option to apply a van vleck correction.
+        cheby_approx : bool
+            Only used if correct_van_vleck is True. Option to implement the van
+            vleck correction with a chebyshev polynomial approximation.
         phase_to_pointing_center : bool
             Option to phase to the observation pointing center.
         propagate_coarse_flags : bool
@@ -1003,15 +745,14 @@ class MWACorrFITS(UVData):
                     else:
                         file_dict["data"].append(file)
 
-                    # get scaling info
+                    # save bscale keyword
                     if bscale is None:
                         if "BSCALE" in head0.keys():
-                            bscale = head0["BSCALE"]
                             self.extra_keywords["SCALEFAC"] = head0["BSCALE"]
                         else:
                             # correlator did a divide by 4 before october 2014
-                            bscale = 0.25
                             self.extra_keywords["SCALEFAC"] = 0.25
+                        bscale = True
 
             # look for flag files
             elif file.lower().endswith(".mwaf"):
@@ -1355,35 +1096,18 @@ class MWACorrFITS(UVData):
 
             # van vleck correction
             if correct_van_vleck:
-                # need data array to have 64 bit precision
-                if self.data_array.dtype != np.complex128:
-                    self.data_array = self.data_array.astype(np.complex128)
-                # scale the data
-                # number of samples per fine channel is equal to channel width (Hz)
-                nsamples = self.channel_width * self.integration_time[0]
-                # cast data to ints
-                self.data_array = np.rint(self.data_array / bscale)
-                # take advantage of cicular polarization! divide by two
-                self.data_array = self.data_array / nsamples
-                self.data_array = self.data_array / 2.0
-                # reshape to (nbls, ntimes, nfreqs, npols)
-                self.data_array = np.swapaxes(self.data_array, 0, 1)
-                # self.data_array = np.around(self.data_array, round_factor)
-                self.van_vleck_correction()
-                # reshape to (ntimes, nbls, nfreqs, npols)
-                self.data_array = np.swapaxes(self.data_array, 0, 1)
-                # rescale the data
-                self.data_array = self.data_array * (bscale * nsamples * 2)
-                # return data array to desired precision
-                if self.data_array.dtype != data_array_dtype:
-                    self.data_array = self.data_array.astype(data_array_dtype)
+                self.van_vleck_correction(
+                    cheby_approx=cheby_approx, data_array_dtype=data_array_dtype
+                )
 
             else:
                 # when MWA data is cast to float for the correlator, the division
                 # by 127 introduces small errors that are mitigated when the data
                 # is cast back into integer
-                self.data_array = np.rint(self.data_array / bscale)
-                self.data_array = self.data_array * bscale
+                self.data_array = np.rint(
+                    self.data_array / self.extra_keywords["SCALEFAC"]
+                )
+                self.data_array = self.data_array * self.extra_keywords["SCALEFAC"]
 
             # combine baseline and time axes
             self.data_array = self.data_array.reshape(

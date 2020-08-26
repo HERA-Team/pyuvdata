@@ -802,17 +802,38 @@ def test_input_output_mapping():
 
 @pytest.mark.filterwarnings("ignore:telescope_location is not set. ")
 @pytest.mark.filterwarnings("ignore:some coarse channel files were not submitted")
-def test_van_vleck():
-    """Test van vleck correction."""
-
+def test_van_vleck_int():
+    """Test van vleck correction integral implementation."""
     uv1 = UVData()
     uv1.read(
         filelist[8:10],
         data_array_dtype=np.complex128,
         flag_init=False,
         correct_van_vleck=True,
-        remove_dig_gains=False,
+        cheby_approx=False,
         remove_coarse_band=False,
+        remove_dig_gains=False,
+    )
+    # read in file corrected using integrate.quad with 1e-10 precision
+    uv2 = UVData()
+    uv2.read(filelist[10])
+
+    assert np.allclose(uv1.data_array, uv2.data_array)
+
+
+@pytest.mark.filterwarnings("ignore:telescope_location is not set. ")
+@pytest.mark.filterwarnings("ignore:some coarse channel files were not submitted")
+def test_van_vleck_cheby():
+    """Test van vleck correction chebyshev implementation."""
+    uv1 = UVData()
+    uv1.read(
+        filelist[8:10],
+        data_array_dtype=np.complex128,
+        flag_init=False,
+        correct_van_vleck=True,
+        cheby_approx=True,
+        remove_coarse_band=False,
+        remove_dig_gains=False,
     )
     # read in file corrected using integrate.quad with 1e-10 precision
     uv2 = UVData()
