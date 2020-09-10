@@ -6,14 +6,15 @@
 import warnings
 import itertools
 import numpy as np
-import scipy
+
+# import scipy
 from astropy.io import fits
 from astropy.time import Time
 from astropy import constants as const
 
-from pyuvdata.data import DATA_PATH
+# import tracemalloc
 
-# from scipy.optimize import root
+from pyuvdata.data import DATA_PATH
 
 from scipy.special import erf
 from scipy.integrate import simps, quad
@@ -110,8 +111,8 @@ def corrcorrect_simps(rho, sig1, sig2):
 
 def van_vleck_autos(sig_arr):
     """Use Newton's method to solve the van vleck function for auto-correlations."""
-    zero_inds = np.where(sig_arr != 0)[0]
-    sighat = sig_arr[zero_inds]
+    nonzero_inds = np.where(sig_arr != 0)[0]
+    sighat = sig_arr[nonzero_inds]
     if len(sighat) > 0:
         guess = np.copy(sighat)
         inds = np.where(np.abs(sighat_vector(guess) - sighat) > 1e-10)[0]
@@ -121,7 +122,7 @@ def van_vleck_autos(sig_arr):
                 / sighat_vector_prime(guess[inds])
             )
             inds = np.where(np.abs(sighat_vector(guess) - sighat) > 1e-10)[0]
-        sig_arr[zero_inds] = guess
+        sig_arr[nonzero_inds] = guess
 
     return sig_arr
 
@@ -129,12 +130,16 @@ def van_vleck_autos(sig_arr):
 # @profile
 def van_vleck_crosses_int(k_arr, sig1_arr, sig2_arr):
     """Use Newton's method to solve the Van Vleck integral for cross-correlations."""
-    zero_inds = np.where(k_arr != 0)[0]
-    neg_inds = np.where(k_arr < 0.0)[0]
-    khat = np.abs(k_arr[zero_inds])
-    sig1 = sig1_arr[zero_inds]
-    sig2 = sig2_arr[zero_inds]
-    if len(khat) > 0.0:
+    nonzero_inds = np.where((k_arr != 0) & (sig1_arr != 0) & (sig2_arr != 0))[0]
+    if len(nonzero_inds) > 0.0:
+        warnings.warn(
+            str(len(nonzero_inds))
+            + " values are being corrected with the van vleck integral"
+        )
+        neg_inds = np.where(k_arr < 0.0)[0]
+        khat = np.abs(k_arr[nonzero_inds])
+        sig1 = sig1_arr[nonzero_inds]
+        sig2 = sig2_arr[nonzero_inds]
         x0 = khat / (sig1 * sig2)
         corr = corrcorrect_simps(x0, sig1, sig2) - khat
         x0 = x0 - (corr / corrcorrect_vect_prime(x0, sig1, sig2))
@@ -146,65 +151,30 @@ def van_vleck_crosses_int(k_arr, sig1_arr, sig2_arr):
             )
             inds2 = np.where(np.abs(corr) > 1e-8)[0]
             inds = inds[inds2]
-        k_arr[zero_inds] = x0 * sig1 * sig2
+        k_arr[nonzero_inds] = x0 * sig1 * sig2
         k_arr[neg_inds] = np.negative(k_arr[neg_inds])
 
     return k_arr
 
 
-# =============================================================================
-# # @profile
-# def van_vleck_crosses_cheby(khat, sig1, sig2, spline1, spline3, spline5):
-#     """Use a Chebyshev polynomial approximation of the van vleck integral."""
-#     zero_inds = np.where(np.logical_and(sig1 != 0.0, sig2 != 0.0))[0]
-#     coef = np.zeros((len(sig1[zero_inds]), 6))
-#     coef[:, 1] = spline1.ev(sig1[zero_inds], sig2[zero_inds])
-#     coef[:, 3] = spline3.ev(sig1[zero_inds], sig2[zero_inds])
-#     coef[:, 5] = spline5.ev(sig1[zero_inds], sig2[zero_inds])
-#     rho_r = np.polynomial.chebyshev.chebval(
-#                                             khat.real[zero_inds],
-#                                             np.transpose(coef),
-#                                             tensor=False,
-#                                             )
-#     rho_i = np.polynomial.chebyshev.chebval(
-#                                             khat.imag[zero_inds],
-#                                             np.transpose(coef),
-#                                             tensor=False,
-#                                             )
-#     khat.real[zero_inds] = rho_r * sig1[zero_inds] * sig2[zero_inds]
-#     khat.imag[zero_inds] = rho_i * sig1[zero_inds] * sig2[zero_inds]
-#
-#     return khat
-# =============================================================================
+def cheby_approx2(
+    khat, sig1, sig2, broad_inds, rho_coeff, sv_inds_right1, sv_inds_right2, ds1, ds2
+):
+    kap = np.empty(broad_inds.shape, dtype=np.complex128)
+    kap[broad_inds] = (
+        _corr_fits.van_vleck_cheby(
+            khat[broad_inds], rho_coeff, sv_inds_right1, sv_inds_right2, ds1, ds2
+        )
+        * sig1[broad_inds]
+        * sig2[broad_inds]
+    )
+    kap[~broad_inds] = van_vleck_crosses_int(
+        khat.real[~broad_inds], sig1[~broad_inds], sig2[~broad_inds]
+    ) + 1j * van_vleck_crosses_int(
+        khat.imag[~broad_inds], sig1[~broad_inds], sig2[~broad_inds]
+    )
 
-
-# @profile
-def cheby_func(k, t1, t3, t5):
-    """
-    Evaluate a third-order odd Chebyshev polynomial.
-
-    Takes in a set of data and the three coefficients to apply to each data point.
-    All inputs expected to be the same length.
-    """
-    return k * t1 + (4 * k ** 3 - 3 * k) * t3 + (16 * k ** 5 - 20 * k ** 3 + 5 * k) * t5
-
-
-# @profile
-def van_vleck_crosses_cheby(khat, sig1, sig2, spline1, spline3, spline5):
-    """Use a Chebyshev polynomial approximation of the Van Vleck integral."""
-    zero_inds = np.where(np.logical_and(sig1 != 0.0, sig2 != 0.0))[0]
-    # interpolate
-    t1 = spline1.ev(sig1[zero_inds], sig2[zero_inds])
-    t3 = spline3.ev(sig1[zero_inds], sig2[zero_inds])
-    t5 = spline5.ev(sig1[zero_inds], sig2[zero_inds])
-    # get rho
-    # if real and imaginary are not corrected separately, precision is lost
-    rho_r = cheby_func(khat.real[zero_inds], t1, t3, t5)
-    rho_i = cheby_func(khat.imag[zero_inds], t1, t3, t5)
-    # get kappa
-    khat[zero_inds] = (rho_r + 1j * rho_i) * sig1[zero_inds] * sig2[zero_inds]
-
-    return khat
+    return kap
 
 
 class MWACorrFITS(UVData):
@@ -386,6 +356,8 @@ class MWACorrFITS(UVData):
         # need data array to have 64 bit precision
         if self.data_array.dtype != np.complex128:
             self.data_array = self.data_array.astype(np.complex128)
+        # print('memory check1')
+        # print(tracemalloc.get_traced_memory())
         # scale the data
         # number of samples per fine channel is equal to channel width (Hz)
         # multiplied be the integration time (s)
@@ -422,56 +394,163 @@ class MWACorrFITS(UVData):
         self.data_array.real[auto_inds, :, pols] = sigma.reshape(
             len(autos), 2, self.Ntimes * self.Nfreqs
         )
+        # print('memory check2')
+        # print(tracemalloc.get_traced_memory())
         # correct crosses
         if cheby_approx:
             # load in interpolation files
             with open(DATA_PATH + "/mwa_config_data/Chebychev_coeff.npy", "rb") as f:
-                rhoC = np.load(f)
+                rho_coeff = np.load(f)
             with open(DATA_PATH + "/mwa_config_data/sigma1.npy", "rb") as f:
                 sig_vec = np.load(f)
-            spline1 = scipy.interpolate.RectBivariateSpline(
-                sig_vec, sig_vec, rhoC[:, :, 1]
+            rho_coeff = rho_coeff[:, :, np.array([1, 3, 5])]
+            # new implementation
+            # print('memory check4')
+            # print(tracemalloc.get_traced_memory())
+            sigs = self.data_array.real[autos[:, np.newaxis], :, np.array([0, 3])]
+            # print('memory check5')
+            # print(tracemalloc.get_traced_memory())
+            sig1_inds = self.ant_1_array[crosses][:, np.newaxis]
+            sig2_inds = self.ant_2_array[crosses][:, np.newaxis]
+
+            in_inds = np.logical_and(sigs >= 0.9, sigs <= 4.5)
+
+            sv_inds_right = np.zeros(in_inds.shape, dtype=np.int64)
+            ds = np.zeros(in_inds.shape)
+            sv_inds_right[in_inds] = np.searchsorted(sig_vec, sigs[in_inds])
+            ds[in_inds] = sig_vec[sv_inds_right[in_inds]] - sigs[in_inds]
+
+            broad_inds = np.logical_and(
+                in_inds[sig1_inds, np.array([0, 0, 1, 1]), :],
+                in_inds[sig2_inds, np.array([0, 1, 0, 1]), :],
             )
-            spline3 = scipy.interpolate.RectBivariateSpline(
-                sig_vec, sig_vec, rhoC[:, :, 3]
+            # print('memory check6')
+            # print(tracemalloc.get_traced_memory())
+            sv_inds_right1 = sv_inds_right[sig1_inds, np.array([0, 0, 1, 1]), :][
+                broad_inds
+            ]
+            sv_inds_right2 = sv_inds_right[sig2_inds, np.array([0, 1, 0, 1]), :][
+                broad_inds
+            ]
+
+            ds1 = ds[sig1_inds, np.array([0, 0, 1, 1]), :][broad_inds]
+            ds2 = ds[sig2_inds, np.array([0, 1, 0, 1]), :][broad_inds]
+            # print('memory check7')
+            # print(tracemalloc.get_traced_memory())
+            # option 1
+            kap = np.zeros(broad_inds.shape, np.complex128)
+            kap[broad_inds] = (
+                _corr_fits.van_vleck_cheby(
+                    self.data_array[crosses[:, np.newaxis], :, np.array([0, 1, 2, 3])][
+                        broad_inds
+                    ],
+                    rho_coeff,
+                    sv_inds_right1,
+                    sv_inds_right2,
+                    ds1,
+                    ds2,
+                )
+                * self.data_array[autos[sig1_inds], :, np.array([0, 0, 3, 3])][
+                    broad_inds
+                ]
+                * self.data_array[autos[sig2_inds], :, np.array([0, 3, 0, 3])][
+                    broad_inds
+                ]
             )
-            spline5 = scipy.interpolate.RectBivariateSpline(
-                sig_vec, sig_vec, rhoC[:, :, 5]
+            kap[~broad_inds] = van_vleck_crosses_int(
+                self.data_array.real[crosses[:, np.newaxis], :, np.array([0, 1, 2, 3])][
+                    ~broad_inds
+                ],
+                self.data_array.real[autos[sig1_inds], :, np.array([0, 0, 3, 3])][
+                    ~broad_inds
+                ],
+                self.data_array.real[autos[sig2_inds], :, np.array([0, 3, 0, 3])][
+                    ~broad_inds
+                ],
+            ) + 1j * van_vleck_crosses_int(
+                self.data_array.imag[crosses[:, np.newaxis], :, np.array([0, 1, 2, 3])][
+                    ~broad_inds
+                ],
+                self.data_array.real[autos[sig1_inds], :, np.array([0, 0, 3, 3])][
+                    ~broad_inds
+                ],
+                self.data_array.real[autos[sig2_inds], :, np.array([0, 3, 0, 3])][
+                    ~broad_inds
+                ],
             )
-            # get indices for sigmas for crosses
-            sig1_inds = autos[self.ant_1_array][crosses][:, np.newaxis]
-            sig2_inds = autos[self.ant_2_array][crosses][:, np.newaxis]
-            # get data
-            sig1 = self.data_array.real[sig1_inds, :, np.array([0, 0, 3, 3])].flatten()
-            sig2 = self.data_array.real[sig2_inds, :, np.array([0, 3, 0, 3])].flatten()
-            khat = self.data_array[
-                crosses[:, np.newaxis], :, np.array([0, 1, 2, 3])
-            ].flatten()
-            # correct
-            kap = van_vleck_crosses_cheby(khat, sig1, sig2, spline1, spline3, spline5)
+            self.data_array[crosses[:, np.newaxis], :, np.array([0, 1, 2, 3])] = kap
+
+            # option 2
             self.data_array[
                 crosses[:, np.newaxis], :, np.array([0, 1, 2, 3])
-            ] = kap.reshape(len(crosses), self.Npols, self.Ntimes * self.Nfreqs)
+            ] = cheby_approx2(
+                self.data_array[crosses[:, np.newaxis], :, np.array([0, 1, 2, 3])],
+                self.data_array.real[autos[sig1_inds], :, np.array([0, 0, 3, 3])],
+                self.data_array.real[autos[sig2_inds], :, np.array([0, 3, 0, 3])],
+                broad_inds,
+                rho_coeff,
+                sv_inds_right1,
+                sv_inds_right2,
+                ds1,
+                ds2,
+            )
+            # print('memory check8')
+            # print(tracemalloc.get_traced_memory())
 
             # correct xy autos
-            # get data
-            sig1 = self.data_array.real[autos, :, 0].flatten()
-            sig2 = self.data_array.real[autos, :, 3].flatten()
-            khat = self.data_array[autos, :, 1].flatten()
-            # correct
-            kap = van_vleck_crosses_cheby(khat, sig1, sig2, spline1, spline3, spline5)
+            in_inds = np.logical_and(
+                sigs[:, 0, :] >= 0.9, sigs[:, 1, :] <= 4.5
+            ).flatten()
+            # # print(len(in_inds))
+            sv_inds_right1 = sv_inds_right[:, 0, :].flatten()[in_inds]
+            sv_inds_right2 = sv_inds_right[:, 1, :].flatten()[in_inds]
+            ds1 = ds[:, 0, :].flatten()[in_inds][:, np.newaxis]
+            ds2 = ds[:, 1, :].flatten()[in_inds][:, np.newaxis]
+
+            t = 1e4 * (
+                rho_coeff[sv_inds_right1 - 1, sv_inds_right2 - 1, :] * ds1 * ds2
+                + rho_coeff[sv_inds_right1 - 1, sv_inds_right2, :] * ds1 * (0.01 - ds2)
+                + rho_coeff[sv_inds_right1, sv_inds_right2 - 1, :] * (0.01 - ds1) * ds2
+                + rho_coeff[sv_inds_right1, sv_inds_right2, :]
+                * (0.01 - ds1)
+                * (0.01 - ds2)
+            )
+
+            rho = _corr_fits._cheby_func_cython(
+                self.data_array[autos, :, 1].flatten()[in_inds],
+                t[:, 0],
+                t[:, 1],
+                t[:, 2],
+            )
+            # # print(rho[:, 0:10])
+            kap = np.zeros(len(in_inds), np.complex128)
+            # kap[in_inds] = (rho[0] + 1j * rho[1]) * (
+            kap[in_inds] = (
+                rho
+                * (self.data_array.real[autos, :, 0].flatten()[in_inds])
+                * (self.data_array.real[autos, :, 3].flatten()[in_inds])
+            )
+            kap[~in_inds] = van_vleck_crosses_int(
+                self.data_array.real[autos, :, 1].flatten()[~in_inds],
+                self.data_array.real[autos, :, 0].flatten()[~in_inds],
+                self.data_array.real[autos, :, 3].flatten()[~in_inds],
+            ) + 1j * van_vleck_crosses_int(
+                self.data_array.imag[autos, :, 1].flatten()[~in_inds],
+                self.data_array.real[autos, :, 0].flatten()[~in_inds],
+                self.data_array.real[autos, :, 3].flatten()[~in_inds],
+            )
+
             self.data_array[autos, :, 1] = kap.reshape(
                 len(autos), self.Ntimes * self.Nfreqs
             )
-            self.data_array[autos, :, 2] = np.conj(
-                kap.reshape(len(autos), self.Ntimes * self.Nfreqs)
-            )
+
+            self.data_array[autos, :, 2] = np.conj(self.data_array[autos, :, 1])
 
             # add back in frequency axis
             self.data_array = self.data_array.reshape(
                 (self.Nbls, self.Ntimes, self.Nfreqs, self.Npols)
             )
-
+        # solve integral directly
         else:
             # add back in frequency axis
             self.data_array = self.data_array.reshape(
@@ -683,6 +762,10 @@ class MWACorrFITS(UVData):
         if not isinstance(start_flag, (int, float)):
             if start_flag != "goodtime":
                 raise ValueError("start_flag must be int or float or 'goodtime'")
+
+        # tracemalloc.start()
+        # print('memory check1')
+        # print(tracemalloc.get_traced_memory())
 
         # iterate through files and organize
         # create a list of included coarse channels
@@ -1023,6 +1106,8 @@ class MWACorrFITS(UVData):
         self.polarization_array = np.array([-6, -8, -7, -5])
 
         if read_data:
+            # # # print('memory check2')
+            # # # print(tracemalloc.get_traced_memory())
             # read data into an array with dimensions (time, uv, baselines*pols)
             self.data_array = np.zeros(
                 (self.Ntimes, self.Nfreqs, self.Nbls * self.Npols),
@@ -1093,7 +1178,8 @@ class MWACorrFITS(UVData):
                 )
             )[0]
             self.flag_array[:, bad_ant_inds, :, :] = True
-
+            # print('memory check3')
+            # print(tracemalloc.get_traced_memory())
             # van vleck correction
             if correct_van_vleck:
                 self.van_vleck_correction(
@@ -1108,7 +1194,9 @@ class MWACorrFITS(UVData):
                     self.data_array / self.extra_keywords["SCALEFAC"]
                 )
                 self.data_array = self.data_array * self.extra_keywords["SCALEFAC"]
-
+            # # # print('memory check9')
+            # # # print(tracemalloc.get_traced_memory())
+            # tracemalloc.stop()
             # combine baseline and time axes
             self.data_array = self.data_array.reshape(
                 (self.Nblts, self.Nfreqs, self.Npols)
