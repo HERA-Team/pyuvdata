@@ -232,7 +232,7 @@ cpdef get_khat(rho, sig1, sig2):
 
 @cython.wraparound(False)
 @cython.boundscheck(False)
-cpdef numpy.ndarray[ndim=2, dtype=numpy.float64_t[:, ::1]] _get_cheby_coeff(
+cdef numpy.ndarray[ndim=2, dtype=numpy.float64_t[:, ::1]] _get_cheby_coeff(
     numpy.ndarray[ndim=3, dtype=numpy.float64_t] rho_coeff,
     numpy.ndarray[ndim=1, dtype=numpy.int64_t] sv_inds_right1,
     numpy.ndarray[ndim=1, dtype=numpy.int64_t] sv_inds_right2,
@@ -243,6 +243,7 @@ cpdef numpy.ndarray[ndim=2, dtype=numpy.float64_t[:, ::1]] _get_cheby_coeff(
   cdef int j
   cdef int n = len(ds1)
   cdef numpy.ndarray[ndim=2, dtype=numpy.float64_t] t = np.zeros((n, 3), dtype=np.float64)
+
   for i in cython.parallel.prange(n, nogil=True):
       for j in range(3):
           t[i, j] = 1e4 * (
@@ -254,6 +255,36 @@ cpdef numpy.ndarray[ndim=2, dtype=numpy.float64_t[:, ::1]] _get_cheby_coeff(
 
   return t
 
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+cpdef numpy.ndarray[ndim=1, dtype=numpy.complex128_t[::1]] van_vleck_cheby(
+    numpy.ndarray[ndim=1, dtype=numpy.complex128_t] khat,
+    numpy.ndarray[ndim=3, dtype=numpy.float64_t] rho_coeff,
+    numpy.ndarray[ndim=1, dtype=numpy.int64_t] sv_inds_right1,
+    numpy.ndarray[ndim=1, dtype=numpy.int64_t] sv_inds_right2,
+    numpy.ndarray[ndim=1, dtype=numpy.float64_t] ds1,
+    numpy.ndarray[ndim=1, dtype=numpy.float64_t] ds2
+):
+
+  cdef numpy.float64_t[:, ::1] t = _get_cheby_coeff(rho_coeff, sv_inds_right1, sv_inds_right2, ds1, ds2)
+  cdef numpy.float64_t[:, ::1] k = np.array([khat.real, khat.imag])
+  cdef int n = k.shape[1]
+  cdef int i
+  cdef int j
+  cdef numpy.ndarray[ndim=1, dtype=numpy.complex128_t] rho = np.zeros((n), dtype=np.complex128)
+
+  for i in cython.parallel.prange(n, nogil=True):
+        rho[i] = (
+            k[0, i] * (t[i, 0] - 3 * t[i, 1] + 5 * t[i, 2])
+            + k[0, i] ** 3 * (4 * t[i, 1] - 20 * t[i, 2])
+            + k[0, i] ** 5 * (16 * t[i, 2]) + 1j * (
+            k[1, i] * (t[i, 0] - 3 * t[i, 1] + 5 * t[i, 2])
+            + k[1, i] ** 3 * (4 * t[i, 1] - 20 * t[i, 2])
+            + k[1, i] ** 5 * (16 * t[i, 2]))
+        )
+
+  return rho
 
 
 @cython.boundscheck(False)
@@ -270,8 +301,6 @@ cpdef numpy.ndarray[ndim=1, dtype=numpy.complex128_t[::1]] _cheby_func_cython(
   cdef int j
   cdef numpy.ndarray[ndim=1, dtype=numpy.complex128_t] cheby = np.zeros((n), dtype=np.complex128)
   for i in cython.parallel.prange(n, nogil=True):
-      # for j in range(2):
-  # for i in range(n):
         cheby[i] = (
             k[0, i] * (t1[i] - 3 * t3[i] + 5 * t5[i])
             + k[0, i] ** 3 * (4 * t3[i] - 20 * t5[i])
@@ -280,39 +309,5 @@ cpdef numpy.ndarray[ndim=1, dtype=numpy.complex128_t[::1]] _cheby_func_cython(
             + k[1, i] ** 3 * (4 * t3[i] - 20 * t5[i])
             + k[1, i] ** 5 * (16 * t5[i]))
         )
-  # cdef numpy.ndarray[ndim=1, dtype=numpy.complex128_t] rho = cheby[0] + 1j * cheby[1]
 
   return cheby
-
-
-@cython.boundscheck(False)
-@cython.wraparound(False)
-cpdef numpy.ndarray[ndim=1, dtype=numpy.complex128_t[::1]] van_vleck_cheby(
-    numpy.ndarray[ndim=1, dtype=numpy.complex128_t] khat,
-    numpy.ndarray[ndim=3, dtype=numpy.float64_t] rho_coeff,
-    numpy.ndarray[ndim=1, dtype=numpy.int64_t] sv_inds_right1,
-    numpy.ndarray[ndim=1, dtype=numpy.int64_t] sv_inds_right2,
-    numpy.ndarray[ndim=1, dtype=numpy.float64_t] ds1,
-    numpy.ndarray[ndim=1, dtype=numpy.float64_t] ds2
-):
-  # rho_coeff = np.ascontiguousarray(rho_coeff, dtype=np.float64)
-  cdef numpy.float64_t[:, ::1] t = _get_cheby_coeff(rho_coeff, sv_inds_right1, sv_inds_right2, ds1, ds2)
-  cdef numpy.float64_t[:, ::1] k = np.array([khat.real, khat.imag])
-  cdef int n = k.shape[1]
-  cdef int i
-  cdef int j
-  cdef numpy.ndarray[ndim=1, dtype=numpy.complex128_t] rho = np.zeros((n), dtype=np.complex128)
-  for i in cython.parallel.prange(n, nogil=True):
-      # for j in range(2):
-  # for i in range(n):
-        rho[i] = (
-            k[0, i] * (t[i, 0] - 3 * t[i, 1] + 5 * t[i, 2])
-            + k[0, i] ** 3 * (4 * t[i, 1] - 20 * t[i, 2])
-            + k[0, i] ** 5 * (16 * t[i, 2]) + 1j * (
-            k[1, i] * (t[i, 0] - 3 * t[i, 1] + 5 * t[i, 2])
-            + k[1, i] ** 3 * (4 * t[i, 1] - 20 * t[i, 2])
-            + k[1, i] ** 5 * (16 * t[i, 2]))
-        )
-  # cdef numpy.ndarray[ndim=1, dtype=numpy.complex128_t] rho = cheby[0] + 1j * cheby[1]
-
-  return rho

@@ -807,7 +807,6 @@ def test_van_vleck_int():
     uv1 = UVData()
     uv1.read(
         filelist[8:10],
-        data_array_dtype=np.complex128,
         flag_init=False,
         correct_van_vleck=True,
         cheby_approx=False,
@@ -817,7 +816,6 @@ def test_van_vleck_int():
     # read in file corrected using integrate.quad with 1e-10 precision
     uv2 = UVData()
     uv2.read(filelist[10])
-
     assert np.allclose(uv1.data_array, uv2.data_array)
 
 
@@ -828,7 +826,6 @@ def test_van_vleck_cheby():
     uv1 = UVData()
     uv1.read(
         filelist[8:10],
-        data_array_dtype=np.complex128,
         flag_init=False,
         correct_van_vleck=True,
         cheby_approx=True,
@@ -840,3 +837,27 @@ def test_van_vleck_cheby():
     uv2.read(filelist[10])
 
     assert np.allclose(uv1.data_array, uv2.data_array)
+
+
+def test_van_vleck_interp(tmp_path):
+    """Test van vleck correction with sigmas out of cheby interpolation range."""
+    small_sigs = str(tmp_path / "small_sigs07_01.fits")
+    with fits.open(filelist[8]) as mini:
+        mini[1].data = np.full((1, 66048), 7744)
+        mini.writeto(small_sigs)
+    messages = [
+        "values are being corrected with the van vleck integral",
+    ]
+    messages = messages * 10
+    messages.append("telescope_location is not set")
+    messages.append("some coarse channel files were not submitted")
+    uv = UVData()
+    with uvtest.check_warnings(UserWarning, messages):
+        uv.read(
+            [small_sigs, filelist[9]],
+            flag_init=False,
+            correct_van_vleck=True,
+            cheby_approx=True,
+            remove_coarse_band=False,
+            remove_dig_gains=False,
+        )
