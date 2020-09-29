@@ -199,7 +199,10 @@ these files along with MWA metafits files (containing the required metadata)
 into a UVData object which can then be written out to uvfits or any other
 supported file type. There are also options for applying cable length corrections,
 dividing out digital gains, dividing out the coarse band shape, common flagging patterns,
-using cotter flag files, and phasing the data to the pointing center.
+using cotter flag files, and phasing the data to the pointing center. It is also
+optional to apply a Van Vleck correction to the data. The default for this correction is
+to use a Chebyshev polynomial approximation, and there is an option to instead use a
+slower integral implementation.
 
 ::
 
