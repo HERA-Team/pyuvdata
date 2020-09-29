@@ -185,7 +185,7 @@ cdef numpy.ndarray[ndim=2, dtype=numpy.float64_t] _compute_khat(
 
   cdef Py_ssize_t i, j, k, l
 
-  if x.size > 800:
+  if x.size > 800:  # pragma: nocover
     with nogil, parallel():
       for j in prange(x.shape[1]):
         for i in range(x.shape[0]):
@@ -285,29 +285,3 @@ cpdef numpy.ndarray[ndim=1, dtype=numpy.complex128_t[::1]] van_vleck_cheby(
         )
 
   return rho
-
-
-@cython.boundscheck(False)
-@cython.wraparound(False)
-cpdef numpy.ndarray[ndim=1, dtype=numpy.complex128_t[::1]] _cheby_func_cython(
-    numpy.ndarray[ndim=1, dtype=numpy.complex128_t] khat,
-    numpy.ndarray[ndim=1, dtype=numpy.float64_t] t1,
-    numpy.ndarray[ndim=1, dtype=numpy.float64_t] t3,
-    numpy.ndarray[ndim=1, dtype=numpy.float64_t] t5
-):
-  cdef numpy.float64_t[:, ::1] k = np.array([khat.real, khat.imag])
-  cdef int n = k.shape[1]
-  cdef int i
-  cdef int j
-  cdef numpy.ndarray[ndim=1, dtype=numpy.complex128_t] cheby = np.zeros((n), dtype=np.complex128)
-  for i in cython.parallel.prange(n, nogil=True):
-        cheby[i] = (
-            k[0, i] * (t1[i] - 3 * t3[i] + 5 * t5[i])
-            + k[0, i] ** 3 * (4 * t3[i] - 20 * t5[i])
-            + k[0, i] ** 5 * (16 * t5[i]) + 1j * (
-            k[1, i] * (t1[i] - 3 * t3[i] + 5 * t5[i])
-            + k[1, i] ** 3 * (4 * t3[i] - 20 * t5[i])
-            + k[1, i] ** 5 * (16 * t5[i]))
-        )
-
-  return cheby

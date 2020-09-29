@@ -808,6 +808,7 @@ def test_van_vleck_int():
     uv1.read(
         filelist[8:10],
         flag_init=False,
+        data_array_dtype=np.complex64,
         correct_van_vleck=True,
         cheby_approx=False,
         remove_coarse_band=False,
