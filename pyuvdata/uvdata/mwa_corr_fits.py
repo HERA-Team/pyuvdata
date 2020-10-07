@@ -267,7 +267,6 @@ class MWACorrFITS(UVData):
     read_mwa_corr_fits method on the UVData class.
     """
 
-    # @profile
     def correct_cable_length(self, cable_lens):
         """
         Apply a cable length correction to the data array.
@@ -624,7 +623,6 @@ class MWACorrFITS(UVData):
         if self.data_array.dtype != data_array_dtype:
             self.data_array = self.data_array.astype(data_array_dtype)
 
-    # @profile
     def read_mwa_corr_fits(
         self,
         filelist,
@@ -759,7 +757,6 @@ class MWACorrFITS(UVData):
         metafits_file = None
         ppds_file = None
         obs_id = None
-        bscale = None
         file_dict = {}
         start_time = 0.0
         end_time = 0.0
@@ -816,7 +813,7 @@ class MWACorrFITS(UVData):
                     elif np.abs(start_time - first_time) % headstart["INTTIME"] != 0.0:
                         raise ValueError(
                             "coarse channel start times are misaligned by an amount that is not \
-                                an integer multiple of the integration time"
+                            an integer multiple of the integration time"
                         )
                     elif start_time > first_time:
                         start_time = first_time
@@ -842,13 +839,12 @@ class MWACorrFITS(UVData):
                         file_dict["data"].append(file)
 
                     # save bscale keyword
-                    if bscale is None:
+                    if "SCALEFAC" not in self.extra_keywords.keys():
                         if "BSCALE" in head0.keys():
                             self.extra_keywords["SCALEFAC"] = head0["BSCALE"]
                         else:
                             # correlator did a divide by 4 before october 2014
                             self.extra_keywords["SCALEFAC"] = 0.25
-                        bscale = True
 
             # look for flag files
             elif file.lower().endswith(".mwaf"):
