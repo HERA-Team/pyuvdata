@@ -2009,6 +2009,7 @@ def calc_uvw(
 
     This routine is meant as a convenience function for producing baseline coordinates
     based under a few different circumstances:
+
     1) Calculating ENU coordinates using antenna positions
     2) Calculating uwv coordinates at a given sky position using antenna positions
     3) Converting from ENU coordinates to uvw coordinates
