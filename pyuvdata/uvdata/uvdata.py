@@ -162,7 +162,10 @@ class UVData(UVBase):
             tols=1e-3 / (60.0 * 60.0 * 24.0),
         )  # 1 ms in days
 
-        desc = "Array of lsts, center of integration, shape (Nblts), " "units radians"
+        desc = (
+            "Array of local apparent sidereal times (LAST) at the center of "
+            "integration, shape (Nblts), units radians."
+        )
         self._lst_array = uvp.UVParameter(
             "lst_array",
             description=desc,
@@ -253,19 +256,48 @@ class UVData(UVBase):
             "channel_width", description=desc, expected_type=np.float, tols=1e-3,
         )  # 1 mHz
 
-        # --- observation information ---
-        self._object_name = uvp.UVParameter(
-            "object_name",
-            description="Source or field " "observed (string)",
-            form="str",
-            expected_type=str,
+        desc = (
+            "Name(s) of source(s) or field(s) observed. Type string, or if "
+            "multi_object = True, a list of strings of length (Nobjects,)."
         )
+        self._object_name = uvp.UVParameter(
+            "object_name", description=desc, form="str", expected_type=str,
+        )
+
+        # --- multi-object handling ---
+        desc = (
+            'Only relevant if phase_type = "phased". Specifies the that the data set '
+            "contains multiple sources within it."
+        )
+        self._multi_object = uvp.UVParameter(
+            "multi_object", description=desc, expected_type=np.bool, value=False,
+        )
+
+        desc = (
+            "Required if multi_object = True. Specifies the number of sources "
+            "contained within the data set."
+        )
+
+        self._Nobjects = uvp.UVParameter(
+            "Nobjects", description=desc, expected_type=np.int, required=False,
+        )
+
+        desc = (
+            "Only relevant if multi_object = True. Dictionary containing information "
+            "individual objects, including coordinate information. Keys are matched "
+            "items in the object_name list attribute."
+        )
+        self._object_dict = uvp.UVParameter(
+            "object_dict", description=desc, expected_type=dict, required=False,
+        )
+
         self._telescope_name = uvp.UVParameter(
             "telescope_name",
             description="Name of telescope " "(string)",
             form="str",
             expected_type=str,
         )
+
         self._instrument = uvp.UVParameter(
             "instrument",
             description="Receiver or backend. " "Sometimes identical to telescope_name",
@@ -369,6 +401,34 @@ class UVData(UVBase):
         )
 
         desc = (
+            'Required if phase_type = "phased". Apparent right ascension of phase '
+            "center in the topocentric frame of the observatory, units radians."
+            "Shape (Nblts,), type = float."
+        )
+        self._phase_center_app_ra = uvp.AngleParameter(
+            "phase_center_app_ra",
+            required=False,
+            form=("Nblts",),
+            expected_type=np.float64,
+            description=desc,
+            tols=radian_tol,
+        )
+
+        desc = (
+            'Required if phase_type = "phased". Declination of phase center '
+            "in the topocentric frame of the observatory, units radians. "
+            "Shape (Nblts,), type = float."
+        )
+        self._phase_center_app_dec = uvp.AngleParameter(
+            "phase_center_app_dec",
+            required=False,
+            form=("Nblts",),
+            expected_type=np.float,
+            description=desc,
+            tols=radian_tol,
+        )
+
+        desc = (
             'Only relevant if phase_type = "phased". Specifies the frame the'
             ' data and uvw_array are phased to. Options are "gcrs" and "icrs",'
             ' default is "icrs"'
@@ -379,6 +439,19 @@ class UVData(UVBase):
             description=desc,
             expected_type=str,
             acceptable_vals=["icrs", "gcrs"],
+        )
+
+        desc = (
+            "Required if multi_object = True. Maps individual entries along the Nblt "
+            "axis to a specific object in object_name (zero-indexed). Shape (Nblts), "
+            "type = int."
+        )
+        self._object_id_array = uvp.UVParameter(
+            "object_id_array",
+            description=desc,
+            form=("Nblts",),
+            expected_type=np.int,
+            required=False,
         )
 
         # --- antenna information ----
@@ -580,6 +653,276 @@ class UVData(UVBase):
         self._flex_spw_id_array.required = True
         # Now make sure that chan_width is set to be an array
         self._channel_width.form = ("Nfreqs",)
+
+    def _set_multi_object(self, preserve_source_info=True):
+        """
+        Set multi_object to True, and adjust required paramteres.
+
+        This method is typically not be called directly by users; instead it is called
+        by the file-reading methods to indicate that an object has multiple sources
+        together in the same data set.
+
+        Parameters
+        ----------
+        preserve_source_info : bool
+            Preserve the source information located in object_name, and for phased data
+            sets, also phase_center_ra, phase_center_dec, phase_center_epoch and
+            phase_center_frame. Default is True.
+
+        Raises
+        ------
+        ValueError
+            if the telescope_name is not in known telescopes
+        """
+        # Check to make sure that the data set is "phased" type, since this is
+        # non-sensical for "drift" type data sets.
+        if self.phase_type != "phased":
+            raise ValueError('UVData object must have phase_type == "phased"!')
+
+        self.multi_object = True
+
+        # Mark once-option arrays as now required
+        self._object_id_array.required = True
+        self._Nobjects.required = True
+        self._object_dict.required = True
+
+        if preserve_source_info:
+            if self.phase_type == "phased":
+                # "Phased" objects in the parlance of multi-object is a "sidereal"
+                # source -- a celestial body that does not require an ephemeris to
+                # describe the motion of.
+                self.object_name = [self.object_name]
+                object_dict = {
+                    "object_type": "sidereal",
+                    "object_name": self.object_name[0],
+                    "object_ra": self.phase_center_ra,
+                    "object_dec": self.phase_center_dec,
+                    "coord_frame": self.phase_center_frame,
+                    "coord_epoch": self.phase_center_epoch,
+                }
+                if object_dict["coord_frame"] is None:
+                    object_dict["coord_frame"] = "icrs"
+            elif self.phase_type == "drift":
+                # A "drift" phase-typed is really just an unphased data set, not
+                # actually what one might call a drift scan (array is co-planar to a
+                # fixed az and el). In the lingo of multi-object data sets, we just
+                # call this unphased.
+                self.object_name = ["unphased"]
+                # Unphased dictionary are simple -- they just require two elements
+                object_dict = {"object_type": "unphased", "object_name": "unphased"}
+
+            elif self.phase_type == "unknown":
+                raise ValueError(
+                    "Cannot preserve object properties of the existing data set if "
+                    "the phasing type is unknown! Either specify phasing type, or "
+                    "set /preserve_source_info=False."
+                )
+            # Create our object dictionary
+            self.object_dict = {object_dict["object_name"]: object_dict}
+            # When convering from single-source, all baselines should be phased to
+            # a single target
+            self.object_id_array = np.ones(self.Nblts, dtype=np.int)
+            self.Nobjects = 1
+        else:
+            # Convert object_name into an empty list
+            self.object_name = []
+            # Make a dummy dict for the objects
+            self.object_dict = {}
+            # Mark the ID array as having no sources
+            self.object_id_array = np.zeros(self.Nblts, dtype=np.int) - 1
+            # Set the total number of sources to zero
+            self.Nobjects = 0
+
+    def _add_object(
+        self,
+        object_name,
+        object_type,
+        object_lon=None,
+        object_lat=None,
+        object_frame=None,
+        object_epoch=None,
+        object_pm_ra=None,
+        object_pm_dec=None,
+        object_parallax=None,
+        object_rad_vel=None,
+    ):
+        """
+        Add an entry to the internal object/source catalog.
+
+        This is a helper function for adding adding a source to the internal object
+        catalog, contained within the attribute object_dict.
+        """
+        # Check whether we should actually be doing this in the first place
+        if not self.mutli_source:
+            raise TypeError("Cannot add a source if multi_object != True!")
+
+        # Object names serve as dict keys, so we need to make sure that they're unique
+        if object_name in self.object_name:
+            souDiffs = 0
+            object_dict = self.object_dict[object_name]
+            souDiffs += object_type != object_type
+
+            if "object_lon" in object_dict.keys():
+                souDiffs += object_dict["object_lon"] != object_lon
+            else:
+                souDiffs += object_lon is not None
+
+            if "object_lat" in object_dict.keys():
+                souDiffs += object_dict["object_lat"] != object_lat
+            else:
+                souDiffs += object_lat is not None
+
+            if "object_frame" in object_dict.keys():
+                souDiffs += object_dict["object_frame"] != object_frame
+            else:
+                souDiffs += object_frame is not None
+
+            if "object_epoch" in object_dict.keys():
+                souDiffs += object_dict["object_epoch"] != object_epoch
+            else:
+                souDiffs += object_epoch is not None
+
+            if "object_pm_ra" in object_dict.keys():
+                souDiffs += object_dict["object_pm_ra"] != object_pm_ra
+            else:
+                souDiffs += object_pm_ra is not None
+
+            if "object_pm_dec" in object_dict.keys():
+                souDiffs += object_dict["object_pm_dec"] != object_pm_dec
+            else:
+                souDiffs += object_pm_dec is not None
+
+            if "object_parallax" in object_dict.keys():
+                souDiffs += object_dict["object_parallax"] != object_parallax
+            else:
+                souDiffs += object_parallax is not None
+
+            if "object_rad_vel" in object_dict.keys():
+                souDiffs += object_dict["object_rad_vel"] != object_rad_vel
+            else:
+                souDiffs += object_rad_vel is not None
+
+            # If the source does have the same name, check to see if all the
+            # atributes match. If so, no problem, go about your business
+            if souDiffs == 0:
+                # Everything matches, return back the object ID of the matching entry
+                return self.object_name.index(object_name)
+            else:
+                raise IndexError("Cannot add different source with an identical name!")
+
+        # If source is unique, begin creating a dictionary for it
+        if object_type == "sidereal":
+            if object_lon is None:
+                raise TypeError("object_lon cannot be None for sidereal object!")
+            elif object_lat is None:
+                raise TypeError("object_lat cannot be None for sidereal object!")
+            elif object_frame is None:
+                raise TypeError("object_frame cannot be None for sidereal object!")
+
+            object_dict = {
+                "object_type": "sidereal",
+                "object_lon": object_lon,
+                "object_lat": object_lat,
+                "object_frame": object_frame,
+            }
+
+            if object_epoch:
+                object_dict["object_epoch"] = object_epoch
+            if object_pm_ra:
+                object_dict["object_pm_ra"] = object_pm_ra
+            if object_pm_dec:
+                object_dict["object_pm_dec"] = object_pm_dec
+            if object_rad_vel:
+                object_dict["object_rad_vel"] = object_pm_dec
+            if object_parallax:
+                object_dict["object_parallax"] = object_parallax
+
+        elif object_type == "ephem":
+            raise NotImplementedError("Ephemeris objects are not (yet) supported!")
+
+        elif object_type == "driftscan":
+            object_dict = {
+                "object_type": "driftscan",
+                "object_lon": object_lon if (object_lon is not None) else np.pi,
+                "object_lat": object_lat if (object_lat is not None) else (np.pi / 2),
+            }
+
+        elif object_type == "unphased":
+            object_dict = {"object_type": "unphased"}
+
+        self.object_name.append(object_name)
+        self.object_dict[object_name] = object_dict
+        self.Nobjects += 1
+        object_id = self.Nobjects - 1
+        return object_id
+
+    def _remove_object(self, defunct_name):
+        """
+        Remove an entry from the internal object/source catalog.
+
+        Removes an object entry from the attributes object_name and object_dict.
+        Only allowed when the UVData object in question is a multi-source data set
+        (i.e., multi_object == True).
+
+        Parameters
+        ----------
+        defunct_name : str
+            Name of the source to be removed
+
+        Raises
+        ------
+        TypeError
+            If multi_object is not set to True
+        IndexError
+            If the name provided is not found in the attribute object_name
+        """
+        if not self.mutli_object:
+            raise TypeError("Cannot remove an object if multi_object != True.")
+
+        if defunct_name not in self.object_name:
+            raise IndexError("No source by that name contained in the catalog!")
+
+        self.object_name.remove(defunct_name)
+        del self.object_dict[defunct_name]
+
+    def _clear_objects(self):
+        """
+        Remove objects dictionaries and names that are no longer in use.
+
+        Remoeves
+        """
+        if not self.mutli_object:
+            raise TypeError("Cannot remove an object if multi_object != True.")
+
+        unique_object_ids = self.object_id_array
+        defunct_list = []
+        good_map = {}
+        Nobjects = 0
+        for idx in range(len(self.object_name)):
+            if idx in unique_object_ids:
+                good_map[idx] = Nobjects
+                Nobjects += 1
+            else:
+                defunct_list.append(self.object_name[idx])
+
+        # Check the number of "good" sources we have -- if we haven't dropped any,
+        # then we are free to bail, otherwise update the Nobjects attribute
+        if Nobjects == self.Nobjects:
+            return
+        else:
+            self.Nobjects = Nobjects
+
+        # Time to kill the entries that are no longer in the source stack
+        for defunct_object in defunct_list:
+            self.object_name.remove(defunct_object)
+            del self.object_dict[defunct_object]
+
+        # Finally, we need to remap the object_id_array, to reflect the fact that we
+        # have mucked the primary indexing in the object_name list
+        self.object_id_array = np.array(
+            [[good_map[object_idx] for object_idx in self.object_id_array]],
+            dtype=np.int,
+        )
 
     def _set_drift(self):
         """
@@ -2508,9 +2851,19 @@ class UVData(UVBase):
         dec,
         epoch="J2000",
         phase_frame="icrs",
-        use_ant_pos=False,
+        object_name=None,
+        object_type="sidereal",
+        pm_ra=0.0,
+        pm_dec=0.0,
+        parallax=0.0,
+        rad_vel=0.0,
+        use_ant_pos=False,  # Can we change this to default to True?
         allow_rephase=True,
         orig_phase_frame=None,
+        use_astropy=False,
+        use_old_phase=False,
+        select_mask=None,
+        cleanup_old_sources=True,
     ):
         """
         Phase a drift scan dataset to a single ra/dec at a particular epoch.
@@ -2548,13 +2901,224 @@ class UVData(UVBase):
             the phase_center_ra/dec of the object does not match `ra` and `dec`.
             Defaults to using the 'phase_center_frame' attribute or 'icrs' if
             that attribute is None.
+        use_astropy : bool
+            If True, use the astropy module for handling calculation of source
+            position coordinates. Default is False, which instead invokes the
+            python-novas library.
+        use_old_phase : bool
+            If True, use the "old" method for calculating baseline uvw-coordinates,
+            which involved using astropy to move antenna positions (in ITRF) into
+            the requested reference frame (either GCRS or ICRS). Default is False.
+        select_mask : ndarray of bool
+            Optional mask for selecting which data to operate on along the blt-axis,
+            only used if with multi-object data sets (i.e., multi_object=True). Shape
+            is (Nblts,).
 
         Raises
         ------
         ValueError
-            If the phase_type is not 'drift'
-
+            If the phase_type is 'phased' and allow_rephase is False
         """
+        # If the selection mask is being used, make sure that it looks okay
+        if select_mask is not None:
+            if use_old_phase:
+                raise ValueError(
+                    "Cannot use the selection mask with the old phasing method. "
+                    "Either remove the selection_mask argument, or set "
+                    "use_old_phase=False to continue."
+                )
+            if not self.multi_object:
+                raise ValueError(
+                    "Cannot apply a selection mask if multi_object=False. "
+                    "Remove the select_mask argument to continue."
+                )
+            if not len(select_mask) != self.Nblts:
+                raise IndexError("Selection mask must be of length Nblts.")
+
+        # Non multi-object datasets don't (yet) have a way of recording the 'extra'
+        # source properties, so make sure that these aren't using any of those
+        # if looking at a single object.
+        if not self.multi_object:
+            if pm_ra not in [0, None]:
+                raise ValueError(
+                    "Non-zero values of pm_ra not supported when multi_source!=True."
+                )
+            if pm_dec not in [0, None]:
+                raise ValueError(
+                    "Non-zero values of pm_dec not supported when multi_source!=True."
+                )
+            if parallax not in [0, None]:
+                raise ValueError(
+                    "Non-zero values of parallax not supported when multi_source!=True."
+                )
+            if rad_vel not in [0, None]:
+                raise ValueError(
+                    "Non-zero values of rad_vel not supported when multi_source!=True."
+                )
+            if object_type != "sidereal":
+                raise ValueError(
+                    "Only sidereal sources are supported when multi_source!=True"
+                )
+
+        # Right up front, we're gonna split off the piece of the code that
+        # does the phasing using the "new" method, since its a lot more flexible
+        # and because I think at some point, everything outside of this loop
+        # can be depreciated
+        if not use_old_phase:
+            # Grab all the meta-data we need for the rotations
+            telescope_location = self.telescope_location_lat_lon_alt
+            time_array = self.time_array
+            lst_array = self.lst_array
+            uvw_array = self.uvw_array
+            ant_1_array = self.ant_1_array
+            ant_2_array = self.ant_2_array
+            # Check to make sure
+            if self.phase_type == "drift":
+                old_w_vals = 0.0
+                old_app_ra = None
+                old_app_dec = None
+                from_enu = True
+            elif self.phase_type == "phased":
+                old_w_vals = self.uvw_array[:, 2]
+                # Check to make sure that this operation is permissible
+                if not allow_rephase:
+                    raise ValueError(
+                        "The data is already phased; set allow_rephase"
+                        " to True to unphase and rephase."
+                    )
+                if (self.phase_center_app_ra is None) or (
+                    self.phase_center_app_dec is None
+                ):
+                    raise AttributeError(
+                        "Object missing phase_center_ra_app or phase_center_dec_app, "
+                        "which implies that the data were phased using the 'old' "
+                        "method for phasing (which is not compatible with the new "
+                        "version of the code). Please run unphase_to_drift with "
+                        "use_old_phase=True to use the new method, otherwise call "
+                        "phase with use_old_phase=True to continue."
+                    )
+                old_w_vals = self.uvw_array[:, 2]
+                old_app_ra = self.phase_center_app_ra
+                old_app_dec = self.phase_center_app_dec
+                from_enu = False
+                if self.multi_object:
+                    # Check and see if we have any unphased objects, in which case
+                    # their w-values should be zeroed out.
+                    nophase_dict = {
+                        idx: self.object_dict[self.object_name[idx]]["object_type"]
+                        == "unphased"
+                        for idx in range(self.Nobjects)
+                    }
+                    w_mask = np.array(
+                        [nophase_dict[idx] for idx in self.object_id_array], dtype=bool
+                    )
+                    old_w_vals[w_mask] = 0.0
+
+            if select_mask is not None:
+                time_array = time_array[select_mask]
+                lst_array = lst_array[select_mask]
+                uvw_array = uvw_array[select_mask, :]
+                ant_1_array = ant_1_array[select_mask]
+                ant_2_array = ant_2_array[select_mask]
+                if isinstance(old_w_vals, np.ndarray):
+                    old_w_vals = old_w_vals[select_mask]
+
+            # Before moving forward with the heavy calculations, we should make sure
+            # that the target in question is unique if this is a multi-source dataset.
+            # If so, add it to the catalog, if not, check that the properties are the
+            # same (and if thats not true, then add_object will throw an error).
+            if self.multi_object:
+                object_id = self._add_object(
+                    object_name,
+                    object_type,
+                    object_lon=ra,
+                    object_lat=dec,
+                    object_frame=phase_frame,
+                    object_epoch=epoch,
+                    object_pm_ra=pm_ra,
+                    object_pm_dec=pm_dec,
+                    object_parallax=parallax,
+                    object_rad_vel=rad_vel,
+                )
+
+            # We got the meta-data, now handle calculating the apparent coordinates
+            new_app_ra, new_app_dec = uvutils.calc_app_coors(
+                ra,
+                dec,
+                coord_frame=phase_frame,
+                coord_epoch=epoch,
+                object_type=object_type,
+                time_array=time_array,
+                lst_array=lst_array,
+                pm_ra=pm_ra,
+                pm_dec=pm_dec,
+                rad_vel=rad_vel,
+                parallax=parallax,
+                telescope_lat=telescope_location[0],
+                telescope_lon=telescope_location[1],
+                telescope_alt=telescope_location[2],
+                use_astropy=use_astropy,
+            )
+
+            # Now its time to do some rotations and calculate the new coordinates
+            new_uvw = uvutils.calc_uvw(
+                app_ra=new_app_ra,
+                app_dec=new_app_dec,
+                lst_array=lst_array,
+                use_ant_pos=use_ant_pos,
+                uvw_array=uvw_array,
+                antenna_positions=self.antenna_positions,
+                ant_1_array=ant_1_array,
+                ant_2_array=ant_2_array,
+                old_app_ra=old_app_ra,
+                old_app_dec=old_app_dec,
+                telescope_lat=telescope_location[0],
+                telescope_lon=telescope_location[1],
+                from_enu=from_enu,
+            )
+
+            # Now its time to update the raw data. This will return empty if
+            # metadata_only is set to True
+            self._apply_w_proj(new_uvw[:, 2], old_w_vals, select_mask=select_mask)
+
+            # Finally, we now take it upon ourselves to update some metadata. What we
+            # do here will depend a little bit on whether or not we have a selection
+            # mask active, since most everything is affected by that.
+            if select_mask is not None:
+                self.uvw_array[select_mask] = new_uvw
+                self.phase_center_app_ra[select_mask] = new_app_ra
+                self.phase_center_app_dec[select_mask] = new_app_dec
+                if self.mutli_source:
+                    self.object_id_array[select_mask] = object_id
+            else:
+                self.uvw_array = new_uvw
+                self.phase_center_app_ra = new_app_ra
+                self.phase_center_app_dec = new_app_dec
+                if self.multi_source:
+                    self.object_id_array[:] = object_id
+
+            # If not multi-object, make sure to update the ra/dec values, since
+            # otherwise we'll have no record of source properties.
+            if not self.multi_source:
+                # Make sure this is actually marked as a phased dataset now
+                self._set_phased()
+
+                # Update the phase center properties
+                self.phase_center_ra = ra
+                self.phase_center_dec = dec
+                self.phase_center_epoch = epoch
+                self.phase_center_frame = phase_frame
+                if object_name is not None:
+                    self.object_name = object_name
+
+        warnings.warn(
+            "The original `phase` method will be deprecated in a future release. "
+            "Note that the old and new phase methods are NOT compatible with one "
+            "another, so if you have phased using the old method, you should use "
+            "the unphase_to_drift method with use_old_phase=True to undo the old "
+            "corrections before using the new version of the phase method.",
+            DeprecationWarning,
+        )
         if self.phase_type == "drift":
             pass
         elif self.phase_type == "phased":
@@ -2804,6 +3368,84 @@ class UVData(UVBase):
             allow_rephase=allow_rephase,
             orig_phase_frame=orig_phase_frame,
         )
+
+    def _apply_w_proj(self, new_w_vals, old_w_vals, select_mask=None):
+        """
+        Apply corrections based on changes to w-coord.
+
+        Adjusts the data to account for a change along the w-axis of a baseline.
+
+        Parameters
+        ----------
+        new_w_vals: float or ndarray of float
+            New w-coordinates for the baselines, in units of meters. Can either be a
+            solitary float (helpful for unphasing data, where new_w_vals can be set to
+            0.0) or an array of shape (Nselect,) (which is Nblts if select_mask=None).
+        old_w_vals: float or ndarray of float
+            Old w-coordinates for the baselines, in units of meters. Can either be a
+            solitary float (helpful for unphasing data, where new_w_vals can be set to
+            0.0) or an array of shape (Nselect,) (which is Nblts if select_mask=None).
+        select_mask: ndarray of bool
+            Array is of shape (Nblts,), where the sum of all enties marked True is
+            equal to Nselect (mentioned above).
+
+        Raises
+        ------
+        IndexError
+            If the length of new_w_vals or old_w_vals isn't compatible with
+            select_mask, or if select mask isn't the right length.
+        """
+        # If we only have metadata, then we have no work to do. W00t!
+        if not self.metadata_only:
+            return
+
+        # Promote everything to float64 ndarrays if they aren't already
+        if not isinstance(new_w_vals, np.ndarray):
+            new_w_vals = np.array([new_w_vals], dtype=np.float64)
+        if not isinstance(new_w_vals[0], np.float64):
+            new_w_vals = new_w_vals.as_type(np.float64)
+        if not isinstance(old_w_vals, np.ndarray):
+            old_w_vals = np.array([old_w_vals], dtype=np.float64)
+        if not isinstance(old_w_vals[0], np.float64):
+            old_w_vals = old_w_vals.as_type(np.float64)
+
+        # Make sure the lengths of everything make sense
+        new_val_len = len(new_w_vals)
+        old_val_len = len(old_w_vals)
+        select_len = self.Nblts if (select_mask is None) else np.sum(select_mask)
+
+        if (select_mask is not None) and (len(select_mask) != self.Nblts):
+            raise IndexError("select_mask must be of length Nblts!")
+        if new_val_len not in [1, select_len]:
+            raise IndexError(
+                "The length of new_w_vals is wrong (expected 1 or %i, got %i)!"
+                % (select_len, new_val_len)
+            )
+        if old_val_len not in [1, select_len]:
+            raise IndexError(
+                "The length of old_w_vals is wrong (expected 1 or %i, got %i)!"
+                % (select_len, old_val_len)
+            )
+
+        delta_w_lambda = (
+            (new_w_vals - old_w_vals).reshape(self.Nblts, 1)
+            * (1 / const.c.to("m/s").value)
+            * self.freq_array.reshape(1, self.Nfreqs)
+        )
+        if select_mask is None or np.all(select_mask):
+            # If all the w values are changing, it turns out to be twice as fast
+            # to ditch any sort of selection mask and just do the full multiply.
+            self.data_array *= np.exp(
+                (-1j * 2 * np.pi) * delta_w_lambda[:, None, :, None]
+            )
+        elif np.any(select_mask):
+            # In the case we are _not_ doing all baselines, use a selection mask to
+            # only update the values we need. In the worse case, it slows down the
+            # processing by ~2x, but it can save a lot on time and memory if only
+            # needing to update a select number of baselines.
+            self.data_array[select_mask] *= np.exp(
+                (-1j * 2 * np.pi) * delta_w_lambda[:, None, :, None]
+            )
 
     def set_uvws_from_antenna_positions(
         self, allow_phasing=False, orig_phase_frame=None, output_phase_frame="icrs"
