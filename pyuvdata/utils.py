@@ -1243,6 +1243,7 @@ def calc_uvw(
     app_ra=None,
     app_dec=None,
     lst_array=None,
+    use_ant_pos=True,
     uvw_array=None,
     antenna_positions=None,
     ant_1_array=None,
@@ -1286,6 +1287,10 @@ def calc_uvw(
     lst_array : ndarray of float
         Local apparent sidereal time, required if deriving baseline coordinates from
         antenna positions, or converting to/from ENU coordinates. Shape is (Nblts,).
+    use_ant_pos : bool
+        Switch to determine whether to derive uvw values from the antenna positions
+        (is set to True), or to use the previously calculated uvw coordiantes to derive
+        new the new baseline vectors (if set to False). Default is True.
     uvw_array : ndarray of float
         Array of previous baseline coordinates (in either uvw or ENU), required if
         not deriving new coordinates from antenna positions.  Shape is (Nblts, 3).
@@ -1341,20 +1346,18 @@ def calc_uvw(
                 "coordinates!"
             )
 
-    if uvw_array is None:
+    if use_ant_pos is None:
         # Assume at this point we are dealing w/ antenna positions
         if antenna_positions is None:
-            raise ValueError(
-                "Must include antenna_positions if not providing uvw_array!"
-            )
+            raise ValueError("Must include antenna_positions if use_ant_pos=True.")
         if (ant_1_array is None) or (ant_2_array is None):
             raise ValueError(
-                "Must include ant_1_array and ant_2_array if not providing uvw_array!"
+                "Must include ant_1_array and ant_2_array if use_ant_pos=True."
             )
         if lst_array is None:
-            raise ValueError("Must include lst_array if not providing uvw_array!")
+            raise ValueError("Must include lst_array if use_ant_pos=True.")
         if telescope_lon is None:
-            raise ValueError("Must include telescope_lon if not providing uvw_array!")
+            raise ValueError("Must include telescope_lon if use_ant_pos=True.")
 
         N_ants = antenna_positions.shape[0]
         # Use the app_ra, app_dec, and lst_array arrays to figure out how many unique
@@ -1441,6 +1444,107 @@ def calc_uvw(
     return new_coords[:, [1, 2, 0]]
 
 
+def calc_app_coords(
+    lon_coord,
+    lat_coord,
+    coord_frame,
+    coord_epoch=None,
+    object_type=None,
+    time_array=None,
+    lst_array=None,
+    pm_ra=None,
+    pm_dec=None,
+    rad_vel=None,
+    parallax=None,
+    telescope_lat=None,
+    telescope_lon=None,
+    telescope_alt=None,
+    use_astropy=False,
+):
+    """
+    Calculate apparent coordinates for several different object types.
+
+    This is a function that does all sorts of interesting things, and I will write a
+    lot more about it shortly.
+    """
+    if object_type == "sidereal":
+        icrs_ra, icrs_dec = translate_sidereal_to_icrs(
+            lon_coord,
+            lat_coord,
+            coord_frame,
+            coord_epoch=coord_epoch,
+            time_array=time_array,
+        )
+        app_ra, app_dec = translate_icrs_to_app(
+            time_array,
+            icrs_ra,
+            icrs_dec,
+            telescope_lon,
+            telescope_lat,
+            telescope_alt,
+            pm_ra=pm_ra,
+            pm_dec=pm_dec,
+            rad_vel=rad_vel,
+            parallax=parallax,
+            use_astropy=use_astropy,
+        )
+    elif object_type == "driftscan":
+        app_ra, app_dec = translate_driftscan_to_app(
+            lon_coord, lat_coord, telescope_lat, lst_array
+        )
+    elif object_type == "ephem":
+        app_ra, app_dec = translate_ephem_to_app()
+    elif object_type == "unphased":
+        # This is the easiest one - this is just supposed to be ENU, so set the
+        # apparent coords to the current lst and telescope_lon. Multiply by one
+        # to get a copy of the array rather than just a pointer
+        app_ra = lst_array.copy()
+        app_dec = np.zeros_like(app_ra) + telescope_lat
+    else:
+        raise ValueError("Object type %s is not recognized." % object_type)
+
+    return app_ra, app_dec
+
+
+def translate_driftscan_to_app(az_val, el_val, telescope_lat, lst_array):
+    """
+    Translate a fixed az-el pointing into apparent RA/Dec coordinates.
+
+    Calculates apparent coordinates for a driftscan observation, helpful (?) for
+    telescopes which do not track.
+    """
+    coord_vector = np.array(
+        [
+            np.sin(el_val),  # X points up
+            -np.sin(az_val)
+            * np.cos(el_val),  # Flip Y due to l-hand -> r-hand in az->ha
+            np.cos(az_val) * np.cos(el_val),  # Z is north-south
+        ]
+    )
+    # Rotate the vector based on the telescope latitude
+    new_vector = rotate_one_axis(coord_vector, (np.pi / 2.0) - telescope_lat, 1)
+
+    # RA vector is a little more complicated, though not by much. The new vector
+    # gives us the hour angle, and so we just have to add the lst to that
+    app_ra = np.arctan2(new_vector[2], new_vector[1]) + lst_array
+
+    # Dec vector is easy -- it remains fixed for all time
+    app_dec = np.zeros_like(lst_array) + np.arcsin(new_vector[2])
+
+    return app_ra, app_dec
+
+
+def translate_ephem_to_app():
+    """
+    Translate a TLE ephem (e.g., for a planet) into apparent of RA and Dec.
+
+    This is a thing that does not yet exist.
+    """
+    raise NotImplementedError("Support for solar-system objects not available (yet).")
+
+    return None, None
+
+
 def translate_sidereal_to_icrs(
     lon_coord, lat_coord, coord_frame, coord_epoch=None, time_array=None,
 ):
@@ -1524,7 +1628,7 @@ def translate_sidereal_to_icrs(
     return new_coord.ra.rad, new_coord.dec.rad
 
 
-def translate_to_app_from_icrs(
+def translate_icrs_to_app(
     time_array,
     ra_coord,
     dec_coord,
