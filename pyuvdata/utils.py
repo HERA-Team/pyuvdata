@@ -1057,7 +1057,7 @@ def rotate_one_axis(xyz_array, rot_amount, rot_axis):
     ----------
     xyz_array : ndarray of float
         Set of 3-dimensional vectors be rotated, in typical right-handed cartesian
-        order, e.g. (x, y, z). Shape is (Nvectors, 3), or (3,) if Nvectors == 1.
+        order, e.g. (x, y, z). Shape is (Nvectors, 3).
     rot_amount : float or ndarray of float
         Amount (in radians) to rotate the given set of coordinates. Can either be a
         single float (or ndarray of shape (1,)) if rotating all vectors by the same
@@ -1071,24 +1071,14 @@ def rotate_one_axis(xyz_array, rot_amount, rot_axis):
     rotated_xyz : ndarray of float
         Set of rotated 3-dimensional vectors, shape (Nvector, 3).
     """
-    # Make the rotation vectors consistent w/ what we expect (ndarray of float64).
+    # Check and see how big of a rotation matrix we need
+    n_rot = 1 if (not isinstance(rot_amount, np.ndarray)) else (rot_amount.shape[0])
+
     # The promotion of values to float64 is to suppress numerical precision issues,
     # since the matrix math can - in limited circumstances - introduce precision errors
     # of order 10x the limiting numerical precision of the float. For a float32/single,
     # thats a part in 1e6 (~arcsec-level errors), but for a float64 it translates to
     # a part in 1e15.
-    if not isinstance(rot_amount, np.ndarray):
-        rot_amount = np.array([rot_amount], dtype=np.float64)
-    elif not isinstance(rot_amount[0].dtype, np.float64):
-        rot_amount = rot_amount.astype(np.float64)
-
-    if xyz_array.ndim == 1:
-        xyz_array.shape = (1,) + xyz_array.shape
-    if not isinstance(xyz_array[0, 0], np.float64):
-        xyz_array = xyz_array.astype(np.float64)
-
-    # Check and see how big of a rotation matrix we need
-    n_rot = rot_amount.shape[0]
     rot_matrix = np.zeros((3, 3, n_rot), dtype=np.float64)
 
     # Figure out which pieces of the matrix we need to update
@@ -1097,9 +1087,9 @@ def rotate_one_axis(xyz_array, rot_amount, rot_axis):
 
     # Fill in the rotation matricies accordingly
     rot_matrix[rot_axis, rot_axis] = 1
-    rot_matrix[temp_idx, temp_idx] = np.cos(rot_amount)
+    rot_matrix[temp_idx, temp_idx] = np.cos(rot_amount, dtype=np.float64)
     rot_matrix[temp_jdx, temp_jdx] = rot_matrix[temp_idx, temp_idx]
-    rot_matrix[temp_idx, temp_jdx] = np.sin(rot_amount)
+    rot_matrix[temp_idx, temp_jdx] = np.sin(rot_amount, dtype=np.float64)
     rot_matrix[temp_jdx, temp_idx] = -rot_matrix[temp_idx, temp_jdx]
 
     # This piece below could be potentially cythonized, although the numpy
@@ -1152,36 +1142,25 @@ def rotate_two_axis(xyz_array, rot_amount1, rot_amount2, rot_axis1, rot_axis2):
         Set of rotated 3-dimensional vectors, shape (Nvector, 3).
 
     """
-    # Make the rotation vectors consistent w/ what we expect (ndarray of float64).
-    # The promotion of values to float64 is to suppress numerical precision issues,
-    # since the matrix math can - in limited circumstances - introduce precision errors
-    # of order 10x the limiting numerical precision of the float. For a float32/single,
-    # thats a part in 1e6 (~arcsec-level errors), but for a float64 it translates to
-    # a part in 1e15.
-    if not isinstance(rot_amount1, np.ndarray):
-        rot_amount1 = np.array([rot_amount1], dtype=np.float64)
-    elif not isinstance(rot_amount1[0].dtype, np.float64):
-        rot_amount1 = rot_amount1.astype(np.float64)
-    if not isinstance(rot_amount2, np.ndarray):
-        rot_amount2 = np.array([rot_amount2], dtype=np.float64)
-    elif not isinstance(rot_amount2[0].dtype, np.float64):
-        rot_amount2 = rot_amount2.astype(np.float64)
-
-    # Make sure that the xyz_array is shaped in the way what we want
-    if xyz_array.ndim == 1:
-        xyz_array = xyz_array[np.newaxis, :]
-    if not isinstance(xyz_array[0, 0], np.float64):
-        xyz_array = xyz_array.astype(np.float64)
-
     # Capture the case where someone wants to do a sequence of rotations on the same
     # axis. Also known as just rotating a single axis.
     if rot_axis1 == rot_axis2:
         return rotate_one_axis(xyz_array, rot_amount1 + rot_amount2, rot_axis1)
 
-    # Figure out how many individual rotation matricies we need
-    n_rot = max(rot_amount1.shape[0], rot_amount2.shape[0])
+    # Figure out how many individual rotation matricies we need, accounting for the
+    # fact that these can either be floats or ndarrays.
+    n_rot = max(
+        rot_amount1.shape[0] if isinstance(rot_amount1, np.ndarray) else 1,
+        rot_amount2.shape[0] if isinstance(rot_amount2, np.ndarray) else 1,
+    )
 
+    # The promotion of values to float64 is to suppress numerical precision issues,
+    # since the matrix math can - in limited circumstances - introduce precision errors
+    # of order 10x the limiting numerical precision of the float. For a float32/single,
+    # thats a part in 1e6 (~arcsec-level errors), but for a float64 it translates to
+    # a part in 1e15.
     rot_matrix = np.empty((3, 3, n_rot), dtype=np.float64)
+
     # There are two permulations per pair of axes -- when the pair is right-hand
     # oriented vs left-hand oriented. Check here which one it is. For example,
     # rotating first on the x-axis, second on the y-axis is considered a
@@ -1197,10 +1176,10 @@ def rotate_two_axis(xyz_array, rot_amount1, rot_amount2, rot_axis1, rot_axis2):
 
     # We're using lots of sin and cos calculations -- doing them once upfront saves
     # quite a bit of time by eliminating redundant calculations
-    sin_lo = np.sin(rot_amount2 if lhd_order else rot_amount1)
-    cos_lo = np.cos(rot_amount2 if lhd_order else rot_amount1)
-    sin_hi = np.sin(rot_amount1 if lhd_order else rot_amount2)
-    cos_hi = np.cos(rot_amount1 if lhd_order else rot_amount2)
+    sin_lo = np.sin(rot_amount2 if lhd_order else rot_amount1, dtype=np.float64)
+    cos_lo = np.cos(rot_amount2 if lhd_order else rot_amount1, dtype=np.float64)
+    sin_hi = np.sin(rot_amount1 if lhd_order else rot_amount2, dtype=np.float64)
+    cos_hi = np.cos(rot_amount1 if lhd_order else rot_amount2, dtype=np.float64)
 
     # Take care of the diagonal terms first, since they aren't actually affected by the
     # order of rotational opertations
@@ -1402,6 +1381,10 @@ def calc_uvw(
             )
     else:
         if from_enu:
+            # Unphased coordinates appear to be stored in ENU coordinates -- that's
+            # equivalent to calculating uvw's based on zenith. We can use that to our
+            # advantage and spoof old_app_ra and old_app_dec based on lst_array and
+            # telescope_lat
             if (telescope_lat is None) or (telescope_lon is None):
                 raise ValueError(
                     "Must include telescope_lat and telescope_lat if moving between "
@@ -1412,27 +1395,25 @@ def calc_uvw(
                     'Must include lst_array if moving between ENU (i.e., "unphased") '
                     "and uvw coordinates!"
                 )
-            # Unphased coordinates appear to be stored in ENU coordinates -- that's
-            # equivalent to calculating uvw's based on zenith. We can use that to our
-            # advantage and spoof old_app_ra and old_app_dec based on lst_array and
-            # telescope_lat
-            old_app_ra = lst_array
-            old_app_dec = np.zeros_like(lst_array) + telescope_lat
-
-        if (old_app_ra is None) or (old_app_dec is None):
-            raise ValueError(
-                "Must include old_ra and old_dec values if data are phased!"
-            )
+        else:
+            if (old_app_ra is None) or (old_app_dec is None):
+                raise ValueError(
+                    "Must include old_ra and old_dec values if data are phased!"
+                )
         # For this operation, all we need is the delta-ha coverage, which _should_ be
         # entirely encapsulated by the change in RA.
-        gha_delta_array = old_app_ra - app_ra
+        gha_delta_array = (lst_array if from_enu else old_app_ra) - app_ra
 
         # Notice that there's an axis re-orientation here, to go from uvw -> XYZ,
         # where X is pointing in the direction of the source. This is mostly here
         # for convenience and code legibility -- a slightly different pair of
         # rotations would give you the same result w/o needing to cycle the axes.
         new_coords = rotate_two_axis(
-            rotate_one_axis(uvw_array[:, [2, 0, 1]], -old_app_dec, 1),
+            rotate_one_axis(  # Yo dawg, I heard you like rotation maticies...
+                uvw_array[:, [2, 0, 1]],
+                (-telescope_lat) if from_enu else (-old_app_dec),
+                1,
+            ),
             gha_delta_array,
             app_dec,
             2,
@@ -1515,10 +1496,12 @@ def translate_driftscan_to_app(az_val, el_val, telescope_lat, lst_array):
     """
     coord_vector = np.array(
         [
-            np.sin(el_val),  # X points up
-            -np.sin(az_val)
-            * np.cos(el_val),  # Flip Y due to l-hand -> r-hand in az->ha
-            np.cos(az_val) * np.cos(el_val),  # Z is north-south
+            [
+                np.sin(el_val),  # X points up
+                -np.sin(az_val)
+                * np.cos(el_val),  # Flip Y due to l-hand -> r-hand in az->ha
+                np.cos(az_val) * np.cos(el_val),  # Z is north-south
+            ]
         ]
     )
     # Rotate the vector based on the telescope latitude
@@ -1563,11 +1546,11 @@ def translate_sidereal_to_icrs(
     lon_coord : float or ndarray of floats
         Logitudinal coordinate to be transformed, typically expressed as the right
         ascension, in units of radians. Can either be a float, or an ndarray of
-        floats with shape (Ncoords,).
+        floats with shape (Ncoords,). Must agree with lat_coord.
     lat_coord : float or ndarray of floats
         Latitudinal coordinate to be transformed, typically expressed as the
         declination, in units of radians. Can either be a float, or an ndarray of
-        floats with shape (Ncoords,).
+        floats with shape (Ncoords,). Must agree with lon_coord.
     coord_frame : string
         Reference frame for the provided coordinates.  Expected to match a list of
         those supported within the astropy SkyCoord object. An incomplete list includes
@@ -1578,50 +1561,47 @@ def translate_sidereal_to_icrs(
         in fractional years.
     time_array : float or ndarray of floats
         Julian date(s) to which the coordinates correspond to, only used in frames
-        with annular motion terms (e.g., abberation in GCRS). Can either be a float
-        or an ndarray of floats with shape (Ntimes,).
+        with annular motion terms (e.g., abberation in GCRS). Can either be a float,
+        or an ndarray of floats with shape (Ntimes,), assuming that either lat_coord
+        and lon_coord are floats, or that Ntimes == Ncoords.
 
     Returns
     -------
-    icrs_ra : ndarray of floats
-        ICRS right ascension coordinates, in units of radians, of either shape
-        (Ncoords,) or (Ntimes,), depending on input parameters.
-    icrs_dec : ndarray of floats
-        ICRS declination coordinates, in units of radians, of either shape
-        (Ncoords,) or (Ntimes,), depending on input parameters.
+    icrs_ra : float or ndarray of floats
+        ICRS right ascension coordinates, in units of radians. Output will be an ndarray
+        if any inputs were, with shape (Ncoords,) or (Ntimes,), depending on inputs.
+    icrs_dec : float or ndarray of floats
+        ICRS declination coordinates, in units of radians. Output will be an ndarray
+        if any inputs were, with shape (Ncoords,) or (Ntimes,), depending on inputs.
     """
-    # Make life easier and turn these items into arrays if they're just bare floats
-    if not isinstance(lon_coord, np.ndarray):
-        lon_coord = np.array([lon_coord])
-    if not isinstance(lat_coord, np.ndarray):
-        lat_coord = np.array([lat_coord])
-
-    # Make sure that the inputs have sensible lengths
-    if len(lon_coord) != len(lat_coord):
-        raise ValueError("Length of lon_coord and lat_coord must be the same!")
+    # Make sure that the inputs are sensible
+    if type(lon_coord) != type(lat_coord):
+        raise ValueError("lon_coord and lat_coord types must agree.")
+    if isinstance(lon_coord, np.ndarray):
+        if len(lon_coord) != len(lat_coord):
+            raise ValueError("Length of lon_coord and lat_coord must be the same.")
 
     # Make sure that time array matched up with what we expect. Thanks to astropy
     # weirdness, time_array has to be the same length as lat/lon coords
+    rep_time = False
+    rep_crds = False
     if time_array is not None:
-        if not isinstance(time_array, np.ndarray):
-            time_array = np.ndarray([time_array])
-        if len(time_array) not in (1, len(lon_coord)):
-            raise ValueError(
-                "Length of time_array must be either that of lat_coord/lon_coord or 1!"
-            )
-        elif len(time_array) != len(lon_coord):
-            if len(time_array) == 1:
-                time_array = np.repeat(time_array, len(lon_coord))
-            else:
-                lon_coord = np.repeat(lon_coord, len(time_array))
-                lat_coord = np.repeat(lat_coord, len(time_array))
+        if type(time_array) != type(lon_coord):
+            rep_time = isinstance(lon_coord, np.ndarray)
+            rep_crds = isinstance(time_array, np.ndarray)
+        elif isinstance(time_array, np.ndarray):
+            if len(time_array) != len(lon_coord):
+                raise ValueError(
+                    "Length of time_array must be either that of "
+                    " lat_coord/lon_coord or 1!"
+                )
 
     coord_object = SkyCoord(
-        lon_coord * units.rad,
-        lat_coord * units.rad,
+        (np.repeat(lon_coord, len(time_array)) if rep_crds else lon_coord) * units.rad,
+        (np.repeat(lat_coord, len(time_array)) if rep_crds else lon_coord) * units.rad,
         frame=coord_frame,
         equinox=coord_epoch,
-        obstime=time_array,
+        obstime=np.repeat(time_array, len(lon_coord)) if rep_time else time_array,
     )
 
     new_coord = coord_object.transform_to("icrs")
@@ -1676,24 +1656,24 @@ def translate_icrs_to_app(
         values should be set to their expected values when the epoch is 2000.0).
         Only used if use_astropy=False, and is optional. Can either be a single float
         or array of shape (Ntimes,), although this must be consistent with other
-        parameters (with the exception of telescope location parameters).
+        parameters (namely ra_coord and dec_coord).
     pm_dec : float or ndarray of float
         Proper motion in Dec of the source, expressed in units of milliarcsec / year.
         Proper motion values are applied relative to the J2000 (i.e., RA/Dec ICRS
         values should be set to their expected values when the epoch is 2000.0).
         Only used if use_astropy=False, and is optional. Can either be a single float
         or array of shape (Ntimes,), although this must be consistent with other
-        parameters (with the exception of telescope location parameters).
+        parameters (namely ra_coord and dec_coord).
     rad_vel : float or ndarray of float
         Radial velocity of the source, expressed in units of km / sec. Only used if
         use_astropy=False, and is optional. Can either be a single float or array of
         shape (Ntimes,), although this must be consistent with other parameters
-        (with the exception of telescope location parameters).
+        (namely ra_coord and dec_coord).
     parallax : float or ndarray of float
         Parallax of the source, expressed in milliarcseconds. Only used if
         use_astropy=False, and is optional. Can either be a single float or array of
         shape (Ntimes,), although this must be consistent with other parameters
-        (with the exception of telescope location parameters).
+        (namely ra_coord and dec_coord).
     use_astropy : boolean
         Use astropy in order to calculate the apparent coordinates. Default is false,
         which instead uses NOVAS for deriving coordinate positions.
@@ -1705,71 +1685,69 @@ def translate_icrs_to_app(
     app_dec : ndarray of floats
         Apparent declination coordinates, in units of radians, of shape (Ntimes,).
     """
-    if not isinstance(time_array, np.ndarray):
-        time_array = np.array([time_array])
-    if not isinstance(time_array, np.ndarray):
-        ra_coord = np.array([ra_coord])
-    if not isinstance(time_array, np.ndarray):
-        dec_coord = np.array([ra_coord])
-
     # Check here to make sure that ra_coord and dec_coord are the same length,
     # either 1 or len(time_array)
-    if (len(ra_coord) == 1) and (len(dec_coord) == 1):
+    if type(ra_coord) != type(dec_coord):
+        raise ValueError("ra_coord and dec_coord must be the same type!")
+    if not isinstance(ra_coord, np.ndarray):
         multi_coord = False
-    elif (len(ra_coord) == len(time_array)) and (len(dec_coord) == len(time_array)):
-        multi_coord = True
+    elif not isinstance(time_array, np.ndarray):
+        multi_coord = False
+        if (len(ra_coord) != 1) or (len(dec_coord) != 1):
+            raise ValueError(
+                "ra_coord and dec_coord must be the same length, either 1 (single "
+                "float) or of the same length as time_array!"
+            )
     else:
-        raise ValueError(
-            "ra_coord and dec_coord must be the same length, either 1 (single float) "
-            "or of the same length as time_array!"
-        )
+        multi_coord = len(time_array) != 1
+        if (len(ra_coord) != len(time_array)) and (len(dec_coord) != len(time_array)):
+            raise ValueError(
+                "ra_coord and dec_coord must be the same length, either 1 (single "
+                "float) or of the same length as time_array!"
+            )
 
     # Useful for both astropy and novas methods, the latter of which gives easy
     # access to the IERS data that we want.
     time_obj_array = Time(time_array, format="jd", scale="utc")
 
-    telescope_lon = np.float64(telescope_lon)
-    telescope_lat = np.float64(telescope_lat)
-    telescope_alt = np.float64(telescope_alt)
-
     # Check the optional inputs, make sure that they're sensible
-    if pm_ra is None:
-        pm_ra = np.zeros_like(ra_coord)
-    else:
-        if not isinstance(pm_ra, np.ndarray):
-            pm_ra = np.array([pm_ra])
-        if len(pm_ra) != len(ra_coord):
-            raise ValueError("pm_ra must be the same length as ra_coord and dec_coord!")
+    if pm_ra is not None:
+        if type(pm_ra) != type(ra_coord):
+            raise ValueError("pm_ra must be the same type as ra_coord and dec_coord!")
+        if isinstance(ra_coord, np.ndarray):
+            if len(pm_ra) != len(ra_coord):
+                raise ValueError(
+                    "pm_ra must be the same length as ra_coord and dec_coord!"
+                )
 
-    if pm_dec is None:
-        pm_dec = np.zeros_like(ra_coord)
-    else:
-        if not isinstance(pm_ra, np.ndarray):
-            pm_dec = np.array([pm_dec])
-        if len(pm_dec) != len(ra_coord):
-            raise ValueError(
-                "pm_dec must be the same length as ra_coord and dec_coord!"
-            )
+    if pm_dec is not None:
+        if type(pm_dec) != type(ra_coord):
+            raise ValueError("pm_dec must be the same type as ra_coord and dec_coord!")
+        if isinstance(ra_coord, np.ndarray):
+            if len(pm_dec) != len(ra_coord):
+                raise ValueError(
+                    "pm_dec must be the same length as ra_coord and dec_coord!"
+                )
 
-    if rad_vel is None:
-        rad_vel = np.zeros_like(ra_coord)
-    else:
-        if not isinstance(rad_vel, np.ndarray):
-            rad_vel = np.array([rad_vel])
-        if len(rad_vel) != len(ra_coord):
+    if parallax is not None:
+        if type(parallax) != type(ra_coord):
             raise ValueError(
-                "rad_vel must be the same length as ra_coord and dec_coord!"
+                "parallax must be the same type as ra_coord and dec_coord!"
             )
+        if isinstance(ra_coord, np.ndarray):
+            if len(parallax) != len(ra_coord):
+                raise ValueError(
+                    "parallax must be the same length as ra_coord and dec_coord!"
+                )
 
-    if parallax is None:
-        parallax = np.zeros_like(ra_coord)
-    else:
-        if not isinstance(parallax, np.ndarray):
-            parallax = np.array([parallax])
-        if len(parallax) != len(ra_coord):
-            raise ValueError(
-                "parallax must be the same length as ra_coord and dec_coord!"
-            )
+    if rad_vel is not None:
+        if type(rad_vel) != type(ra_coord):
+            raise ValueError("rad_vel must be the same type as ra_coord and dec_coord!")
+        if isinstance(ra_coord, np.ndarray):
+            if len(rad_vel) != len(ra_coord):
+                raise ValueError(
+                    "rad_vel must be the same length as ra_coord and dec_coord!"
+                )
 
     if use_astropy:
         # Note that this implementation isn't perfect, but it does appear to agree
@@ -1856,28 +1834,46 @@ def translate_icrs_to_app(
         tt_time_array = time_obj_array.tt.value
         ut1_time_array = time_obj_array.ut1.value
 
+        if not isinstance(time_array, np.ndarray):
+            pm_x_array = np.array([pm_x_array])
+            pm_y_array = np.array([pm_y_array])
+            tt_time_array = np.array([tt_time_array])
+            ut1_time_array = np.array([ut1_time_array])
+
         if np.any(tt_time_array < jd_start) or np.any(tt_time_array > jd_end):
             raise ValueError(
                 "No current support for JPL ephems outside of 1700 - 2300 AD. "
                 "Check back later (or possibly earlier)..."
             )
 
-        app_ra = np.zeros_like(time_array)
-        app_dec = np.zeros_like(time_array)
+        app_ra = np.zeros_like(tt_time_array)
+        app_dec = np.zeros_like(tt_time_array)
 
         for idx in range(len(time_array)):
-            if (idx == 0) or multi_coord:
+            if multi_coord:
                 # Create a catalog entry for the source in question
                 sou_info = novas.make_cat_entry(
                     "kartos_fav_source",  # Dummy source name
                     "GKK",  # Catalog ID, fixed for now
                     0,  # Star ID number, fixed for now
                     ra_coord[idx] * (12.0 / np.pi),  # RA in hours
-                    dec_coord[idx] * (180.0 / np.pi),  # Dec in deg
-                    pm_ra[idx],  # Proper motion RA, disabled for now
-                    pm_dec[idx],  # Proper motion Dec, disabled for now
-                    parallax[idx],  # Parallax, in units of 1/parsec
-                    rad_vel[idx],  # Radial velocity, disabled for now
+                    dec_coord[idx],  # Dec in deg
+                    pm_ra[idx] if (pm_ra is not None) else 0.0,  # Proper motion RA
+                    pm_dec[idx] if (pm_dec is not None) else 0.0,  # Proper motion Dec
+                    parallax[idx] if (parallax is not None) else 0.0,  # Parallax
+                    rad_vel[idx] if (rad_vel is not None) else 0.0,  # Radial velocity
+                )
+            elif idx == 0:
+                sou_info = novas.make_cat_entry(
+                    "kartos_fav_source",  # Dummy source name
+                    "GKK",  # Catalog ID, fixed for now
+                    0,  # Star ID number, fixed for now
+                    ra_coord * (12.0 / np.pi),  # RA in hours
+                    dec_coord,  # Dec in deg
+                    pm_ra if (pm_ra is not None) else 0.0,  # Proper motion RA
+                    pm_dec if (pm_dec is not None) else 0.0,  # Proper motion Dec
+                    parallax if (parallax is not None) else 0.0,  # Parallax
+                    rad_vel if (rad_vel is not None) else 0.0,  # Radial velocity
                 )
 
             # Update polar wobble parameters for a given timestamp
