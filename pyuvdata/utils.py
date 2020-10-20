@@ -1313,11 +1313,6 @@ def calc_uvw(
                 "Must include telescope_lon to calculate baselines"
                 "in ENU coordinates!"
             )
-        # Unphased coordinates appear to be stored in ENU coordinates -- that's
-        # equivalent to calculating uvw's based on zenith. We can use that to our
-        # advantage and spoof the app_ra and app_dec based on LST and telescope_lat
-        app_ra = lst_array
-        app_dec = telescope_lon + np.zeros_like(lst_array)
     else:
         if (app_ra is None) or (app_dec is None):
             raise ValueError(
@@ -1343,21 +1338,33 @@ def calc_uvw(
         # rotations are actually needed. If the ratio of Nblts to number of unique
         # entries is favorable, we can just rotate the antenna positions and save
         # outselves a bit of work.
-        unique_mask = np.append(
-            True,
-            (
-                (app_ra[:-1] != app_ra[1:])
-                | (app_dec[:-1] != app_dec[1:])
-                | (lst_array[:-1] != lst_array[1:])
-            ),
-        )
+        if to_enu:
+            # If to_enu, skip all this -- there's only one unique ha + dec combo
+            unique_mask = np.zeros(len(lst_array), dtype=np.bool)
+            unique_mask[0] = True
+        else:
+            unique_mask = np.append(
+                True,
+                (
+                    ((lst_array[:-1] - app_ra[:-1]) != (lst_array[1:] - app_ra[1:]))
+                    | (app_dec[:-1] != app_dec[1:])
+                ),
+            )
 
         # GHA -> Hour Angle as measured at Greenwich (because antenna coords are
         # centered such that x-plane intersects the meridian at longitude 0).
-        unique_gha = np.repeat(
-            (lst_array[unique_mask] - app_ra[unique_mask]) + telescope_lon, N_ants
-        )
-        unique_dec = np.repeat(app_dec[unique_mask], N_ants)
+        if to_enu:
+            # Unphased coordinates appear to be stored in ENU coordinates -- that's
+            # equivalent to calculating uvw's based on zenith. We can use that to our
+            # advantage and spoof the gha and dec based on telescope lon and lat
+            unique_gha = np.zeros(N_ants) + telescope_lon
+            unique_dec = np.zeros_like(unique_gha) + telescope_lat
+        else:
+            unique_gha = np.repeat(
+                (lst_array[unique_mask] - app_ra[unique_mask]) + telescope_lon, N_ants
+            )
+            unique_dec = np.repeat(app_dec[unique_mask], N_ants)
+
         N_unique = len(unique_gha) // N_ants
 
         # This is the last chance to bail on the "optimized" method -- if the number
@@ -1367,8 +1374,10 @@ def calc_uvw(
         # and GHA.
         if N_unique > (len(unique_mask) / N_ants):
             uvw_array = antenna_positions[ant_2_array] - antenna_positions[ant_1_array]
-            gha_array = (lst_array - app_ra) + telescope_lon
-            new_coords = rotate_two_axis(uvw_array, gha_array, app_dec, 2, 1)
+            gha_array = (0.0 if to_enu else (lst_array - app_ra)) + telescope_lon
+            new_coords = rotate_two_axis(
+                uvw_array, gha_array, telescope_lat if to_enu else app_dec, 2, 1,
+            )
         else:
             ant_vectors = np.tile(antenna_positions, (N_unique, 1))
             ant_rot_vectors = rotate_two_axis(ant_vectors, unique_gha, unique_dec, 2, 1)
@@ -1381,6 +1390,9 @@ def calc_uvw(
             )
     else:
         if from_enu:
+            if to_enu:
+                # Well this was pointless... returning your uvws unharmed
+                return uvw_array
             # Unphased coordinates appear to be stored in ENU coordinates -- that's
             # equivalent to calculating uvw's based on zenith. We can use that to our
             # advantage and spoof old_app_ra and old_app_dec based on lst_array and
@@ -1402,7 +1414,9 @@ def calc_uvw(
                 )
         # For this operation, all we need is the delta-ha coverage, which _should_ be
         # entirely encapsulated by the change in RA.
-        gha_delta_array = (lst_array if from_enu else old_app_ra) - app_ra
+        gha_delta_array = (lst_array if from_enu else old_app_ra) - (
+            lst_array if to_enu else app_ra
+        )
 
         # Notice that there's an axis re-orientation here, to go from uvw -> XYZ,
         # where X is pointing in the direction of the source. This is mostly here
@@ -1415,7 +1429,7 @@ def calc_uvw(
                 1,
             ),
             gha_delta_array,
-            app_dec,
+            telescope_lat if to_enu else app_dec,
             2,
             0,
         )
