@@ -674,11 +674,6 @@ class UVData(UVBase):
         ValueError
             if the telescope_name is not in known telescopes
         """
-        # Check to make sure that the data set is "phased" type, since this is
-        # non-sensical for "drift" type data sets.
-        if self.phase_type != "phased":
-            raise ValueError('UVData object must have phase_type == "phased"!')
-
         self.multi_object = True
 
         # Mark once-option arrays as now required
@@ -2691,7 +2686,9 @@ class UVData(UVBase):
 
         return
 
-    def unphase_to_drift(self, phase_frame=None, use_ant_pos=False):
+    def unphase_to_drift(
+        self, phase_frame=None, use_ant_pos=False, use_old_phase=False
+    ):
         """
         Convert from a phased dataset to a drift dataset.
 
@@ -2707,6 +2704,8 @@ class UVData(UVBase):
         use_ant_pos : bool
             If True, calculate the uvws directly from the antenna positions
             rather than from the existing uvws.
+        use_old_phase : bool
+            If True, uses the 'old' way of calculating phases. Default is False.
 
         Raises
         ------
@@ -2725,6 +2724,65 @@ class UVData(UVBase):
                 "Set the phase_type to drift or phased to "
                 "reflect the phasing status of the data"
             )
+
+        if not use_old_phase:
+            # Check to make sure that these attributes are actually filled. Otherwise,
+            # you probably want to use the old phase method.
+            if (self.phase_center_app_ra is None) or (
+                self.phase_center_app_dec is None
+            ):
+                raise AttributeError(
+                    "Object missing phase_center_ra_app or phase_center_dec_app, "
+                    "which implies that the data were phased using the 'old' "
+                    "method for phasing (which is not compatible with the new "
+                    "version of the code). Please run unphase_to_drift with "
+                    "use_old_phase=True to continue."
+                )
+            old_w_vals = self.uvw_array[:, 2].copy()
+            telescope_location = self.telescope_location_lat_lon_alt
+            if self.multi_object:
+                # Check and see if we have any unphased objects, in which case
+                # their w-values should be zeroed out.
+                nophase_dict = {
+                    idx: self.object_dict[self.object_name[idx]]["object_type"]
+                    == "unphased"
+                    for idx in range(self.Nobjects)
+                }
+                w_mask = np.array(
+                    [nophase_dict[idx] for idx in self.object_id_array], dtype=bool
+                )
+                old_w_vals[w_mask] = 0.0
+
+            new_uvw = uvutils.calc_uvw(
+                lst_array=self.lst_array,
+                use_ant_pos=use_ant_pos,
+                uvw_array=self.uvw_array,
+                antenna_positions=self.antenna_positions,
+                ant_1_array=self.ant_1_array,
+                ant_2_array=self.ant_2_array,
+                old_app_ra=self.phase_center_app_ra,
+                old_app_dec=self.phase_center_app_dec,
+                telescope_lat=telescope_location[0],
+                telescope_lon=telescope_location[1],
+                to_enu=True,
+            )
+
+            self._apply_w_proj(0.0, old_w_vals)
+            self.uvw_array = new_uvw
+
+            # remove phase center
+            if self.multi_object:
+                self.object_id_array[:] = self._add_object("unphased", "unphased")
+                self.phase_center_app_ra = self.lst_array.copy()
+                self.phaes_center_app_dec[:] = self.telescope_location[0]
+            else:
+                self.phase_center_frame = None
+                self.phase_center_ra = None
+                self.phase_center_dec = None
+                self.phase_center_epoch = None
+                self.phase_center_app_ra = None
+                self.phase_center_app_dec = None
+                self._set_drift()
 
         if phase_frame is None:
             if self.phase_center_frame is not None:
@@ -2997,7 +3055,7 @@ class UVData(UVBase):
                         "use_old_phase=True to use the new method, otherwise call "
                         "phase with use_old_phase=True to continue."
                     )
-                old_w_vals = self.uvw_array[:, 2]
+                old_w_vals = self.uvw_array[:, 2].copy()
                 old_app_ra = self.phase_center_app_ra
                 old_app_dec = self.phase_center_app_dec
                 from_enu = False
@@ -3078,8 +3136,10 @@ class UVData(UVBase):
             )
 
             # Now its time to update the raw data. This will return empty if
-            # metadata_only is set to True
-            self._apply_w_proj(new_uvw[:, 2], old_w_vals, select_mask=select_mask)
+            # metadata_only is set to True. Note that object_type is only allowed
+            # to be unphased if this is a multi_object data set.
+            new_w_vals = 0.0 if (object_type == "unphased") else new_uvw[:, 2]
+            self._apply_w_proj(new_w_vals, old_w_vals, select_mask=select_mask)
 
             # Finally, we now take it upon ourselves to update some metadata. What we
             # do here will depend a little bit on whether or not we have a selection
@@ -3110,6 +3170,9 @@ class UVData(UVBase):
                 self.phase_center_frame = phase_frame
                 if object_name is not None:
                     self.object_name = object_name
+
+            # All done w/ the new phase method
+            return
 
         warnings.warn(
             "The original `phase` method will be deprecated in a future release. "
@@ -3427,11 +3490,14 @@ class UVData(UVBase):
                 % (select_len, old_val_len)
             )
 
+        # Calculate the difference in w terms as a function of freq. Note that the
+        # 1/c is there to speed of processing (faster to multiply than divide)
         delta_w_lambda = (
             (new_w_vals - old_w_vals).reshape(self.Nblts, 1)
-            * (1 / const.c.to("m/s").value)
+            * (1.0 / const.c.to("m/s").value)
             * self.freq_array.reshape(1, self.Nfreqs)
         )
+
         if select_mask is None or np.all(select_mask):
             # If all the w values are changing, it turns out to be twice as fast
             # to ditch any sort of selection mask and just do the full multiply.
