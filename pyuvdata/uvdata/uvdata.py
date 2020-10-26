@@ -1170,6 +1170,39 @@ class UVData(UVBase):
         self.lst_array = unique_lst_array[inverse_inds]
         return
 
+    def _set_app_coords_helper(self, use_astropy=False):
+        """
+        Set values for the apparent coordinate arrays.
+
+        This is an internal helper function, which is not designed to be called by
+        users, but rather individual read/write functions for the UVData object.
+        Users should use the phase() method for updating/adjusting coordiante values.
+
+        Parameters
+        ----------
+        use_astropy : bool, False
+            Use astropy for the calculation of apparent coordiantes (setting this to
+            false will instead call NOVAS).
+        """
+        if self.multi_source:
+            pass
+        else:
+            # So this is actually the easier of the two cases -- just use the object
+            # properties to fill in the relevant data
+            app_ra, app_dec = uvutils.calc_app_coords(
+                self.phase_center_ra,
+                self.phase_center_dec,
+                self.phase_center_frame,
+                coord_epoch=self.phase_center_epoch,
+                time_array=self.time_array,
+                lst_array=self.lst_array,
+                telescope_lat=self.telescope_location_lat_lon_alt[0],
+                telescope_lon=self.telescope_location_lat_lon_alt[1],
+                telescope_alt=self.telescope_location_lat_lon_alt[2],
+                use_astropy=use_astropy,
+                object_type="sidereal",
+            )
+
     def set_lsts_from_time_array(self, background=False):
         """Set the lst_array based from the time_array.
 
@@ -2648,7 +2681,7 @@ class UVData(UVBase):
             self.phase_center_app_ra = self.phase_center_app_ra[index_array]
         if self.phase_center_app_dec is not None:
             self.phase_center_app_ra = self.phase_center_app_dec[index_array]
-        if self.multi_source:
+        if self.multi_object:
             self.object_id_array = self.object_id_array[index_array]
 
         if not self.metadata_only:
@@ -2815,7 +2848,7 @@ class UVData(UVBase):
             self._apply_w_proj(0.0, old_w_vals)
             self.uvw_array = new_uvw
 
-            # remove phase center
+            # remove/update phase center
             if self.multi_object:
                 self.object_id_array[:] = self._add_object("unphased", "unphased")
                 self.phase_center_app_ra = self.lst_array.copy()
@@ -2829,6 +2862,22 @@ class UVData(UVBase):
                 self.phase_center_app_dec = None
                 self._set_drift()
 
+        # If you are a multi-object data set, there's no valid reason to be going
+        # back to the old phase method. Time to bail!
+        if self.multi_object:
+            raise NotImplementedError(
+                "Multi-object data sets are not compatible with the old phasing "
+                "method, please set use_old_phase=False."
+            )
+
+        warnings.warn(
+            "The original `phase` method will be deprecated in a future release. "
+            "Note that the old and new phase methods are NOT compatible with one "
+            "another, so if you have phased using the old method, you should use "
+            "the unphase_to_drift method with use_old_phase=True to undo the old "
+            "corrections before using the new version of the phase method.",
+            DeprecationWarning,
+        )
         if phase_frame is None:
             if self.phase_center_frame is not None:
                 phase_frame = self.phase_center_frame
@@ -3055,23 +3104,23 @@ class UVData(UVBase):
         if not self.multi_object:
             if pm_ra not in [0, None]:
                 raise ValueError(
-                    "Non-zero values of pm_ra not supported when multi_source!=True."
+                    "Non-zero values of pm_ra not supported when multi_object!=True."
                 )
             if pm_dec not in [0, None]:
                 raise ValueError(
-                    "Non-zero values of pm_dec not supported when multi_source!=True."
+                    "Non-zero values of pm_dec not supported when multi_object!=True."
                 )
             if parallax not in [0, None]:
                 raise ValueError(
-                    "Non-zero values of parallax not supported when multi_source!=True."
+                    "Non-zero values of parallax not supported when multi_object!=True."
                 )
             if rad_vel not in [0, None]:
                 raise ValueError(
-                    "Non-zero values of rad_vel not supported when multi_source!=True."
+                    "Non-zero values of rad_vel not supported when multi_object!=True."
                 )
             if object_type != "sidereal":
                 raise ValueError(
-                    "Only sidereal sources are supported when multi_source!=True"
+                    "Only sidereal sources are supported when multi_object!=True"
                 )
 
         # Right up front, we're gonna split off the piece of the code that
@@ -3202,12 +3251,12 @@ class UVData(UVBase):
                 self.uvw_array = new_uvw
                 self.phase_center_app_ra = new_app_ra
                 self.phase_center_app_dec = new_app_dec
-                if self.multi_source:
+                if self.multi_object:
                     self.object_id_array[:] = object_id
 
             # If not multi-object, make sure to update the ra/dec values, since
             # otherwise we'll have no record of source properties.
-            if not self.multi_source:
+            if not self.multi_object:
                 # Make sure this is actually marked as a phased dataset now
                 self._set_phased()
 
@@ -3221,6 +3270,14 @@ class UVData(UVBase):
 
             # All done w/ the new phase method
             return
+
+        # If you are a multi-object data set, there's no valid reason to be going
+        # back to the old phase method. Time to bail!
+        if self.multi_object:
+            raise NotImplementedError(
+                "Multi-object data sets are not compatible with the old phasing "
+                "method, please set use_old_phase=False."
+            )
 
         warnings.warn(
             "The original `phase` method will be deprecated in a future release. "
@@ -3638,7 +3695,7 @@ class UVData(UVBase):
                     )
                 if allow_phasing:
                     old_w_vals = self.uvw_array[:, 2].copy()
-                    if self.multi_source:
+                    if self.multi_object:
                         old_w_vals[self._check_for_unphased_objects] = 0.0
                     self._apply_w_proj(new_uvw[:, 2], old_w_vals)
             # If the data are phased, we've already adjusted the phases. Now we just
