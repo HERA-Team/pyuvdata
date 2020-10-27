@@ -44,8 +44,8 @@ class Mir(UVData):
         ----------
         filepath : str
             The file path to the MIR folder to read from.
-        isource : int
-            Source code for MIR dataset
+        isource : list of int
+            Source code(s) for MIR dataset
         irec : int
             Receiver code for MIR dataset
         isb : list of int
@@ -60,10 +60,25 @@ class Mir(UVData):
         # Use the mir_parser to read in metadata, which can be used to select data.
         mir_data = mir_parser.MirParser(filepath)
 
-        # Select out the source and receiver that we want to deal with, since we can
-        # only currently handle one of each
+        # By default, we will want to assume that MIR datasets are phased, multi-spw,
+        # and multi-object. At present, there is no advantage to allowing these not to
+        # be true on read-in, particularly as in the long-term, these settings will
+        # hopefully become the default for all data sets.
+        self._set_phased()
+        self._set_multi_object()
+        self._set_flex_spw()
+
+        isource_full_list = np.unique(mir_data.in_read["isource"]).tolist()
         if isource is None:
-            isource = mir_data.in_read["isource"][0]
+            isource = isource_full_list.copy()
+
+        # Grab the list of sources we want to select on
+        isource_dict = {key: key in isource for key in isource_full_list}
+        if len(isource_dict) == 0:
+            raise IndexError("No valid sources selected!")
+
+        # Select out the receiver that we want to deal with, since we can only
+        # currently handle one of each
         if irec is None:
             irec = mir_data.bl_read["irec"][0]
 
@@ -82,7 +97,6 @@ class Mir(UVData):
         # Remember whether or not we're dealing with DSB (2 windows per corrchunk)
         dsb_spws = True if len(isb) == 2 else False
 
-        #
         corrchunk_full_list = np.unique(mir_data.sp_read["corrchunk"]).tolist()
         if corrchunk is None:
             if pseudo_cont:
@@ -92,7 +106,9 @@ class Mir(UVData):
                 corrchunk.remove(0) if 0 in corrchunk else None
         corrchunk_dict = {key: key in corrchunk for key in corrchunk_full_list}
 
-        mir_data.use_in = mir_data.in_read["isource"] == isource
+        mir_data.use_in = np.array(
+            [isource_dict[key] for key in mir_data.in_read["isource"]]
+        )
         mir_data.use_bl = np.logical_and(
             np.logical_and(
                 mir_data.bl_read["irec"] == irec, mir_data.bl_read["ipol"] == 0
@@ -117,8 +133,9 @@ class Mir(UVData):
         ]
 
         # Create a simple array/list for broadcasting values stored on a
-        # per-blt basis into per-spw records.
+        # per-blt basis into per-spw records, and per-time into per-blt records
         sp_bl_maparr = [mir_data.blhid_dict[idx] for idx in mir_data.sp_data["blhid"]]
+        bl_in_maparr = [mir_data.inhid_dict[idx] for idx in mir_data.bl_data["inhid"]]
 
         # Different sidebands in MIR are (strangely enough) recorded as being
         # different baseline records. To be compatible w/ UVData, we just splice
@@ -129,7 +146,6 @@ class Mir(UVData):
         # Here we'll want to construct a simple dictionary, that'll basically help us
         # to construct the frequency axis, and map the UVData spectral window ID number
         # to our weird mapping system in MIR.
-        self._set_flex_spw()
         Nfreqs = 0  # Set to zero to starts for flex_spw
 
         # Initialize some arrays that we'll be appending to
@@ -199,15 +215,18 @@ class Mir(UVData):
                 np.concatenate((mir_data.bl_data["iant1"], mir_data.bl_data["iant2"]))
             )
         )
-
         self.Nants_telescope = 8
         self.Nbls = int(self.Nants_data * (self.Nants_data - 1) / 2)
         self.Nblts = len(mir_data.bl_data) // (1 + dsb_spws)
         self.Npols = 1  # todo: We will need to go back and expand this.
         self.Nspws = len(corrchunk)
         self.Ntimes = len(mir_data.in_data)
-        self.ant_1_array = mir_data.bl_data["iant1"][:: 1 + dsb_spws] - 1
-        self.ant_2_array = mir_data.bl_data["iant2"][:: 1 + dsb_spws] - 1
+        self.ant_1_array = (
+            mir_data.bl_data["iant1"][mir_data.bl_data["isb"] == isb[0]] - 1
+        )
+        self.ant_2_array = (
+            mir_data.bl_data["iant2"][mir_data.bl_data["isb"] == isb[0]] - 1
+        )
         self.antenna_names = [
             "Ant 1",
             "Ant 2",
@@ -247,14 +266,9 @@ class Mir(UVData):
         # We can just skip an appropriate number of records
         self.integration_time = mir_data.sp_data["integ"][:: len(corrchunk)]
 
-        # If using DSB data, then keep in mind that you'll have two records per
-        # Nblt with int time array -- split-filter this
-        if dsb_spws:
-            self.integration_time = self.integration_time[::2]
-
         # TODO: Using MIR V3 convention, will need to be V2 compatible eventually.
         self.lst_array = (
-            mir_data.in_data["lst"][bl_in_maparr].astype(float) + (0.0 / 3600.0)
+            mir_data.in_data["lst"][bl_in_maparr[:: 1 + dsb_spws]].astype(float)
         ) * (np.pi / 12.0)
 
         # TODO: We change between xx yy and rr ll, so we will need to update this.
@@ -263,7 +277,7 @@ class Mir(UVData):
         self.spw_array = np.arange(len(corrchunk))
 
         self.telescope_name = "SMA"
-        time_array_mjd = mir_data.in_read["mjd"][bl_in_maparr]
+        time_array_mjd = mir_data.in_read["mjd"][bl_in_maparr[:: 1 + dsb_spws]]
         self.time_array = time_array_mjd + 2400000.5
 
         # Need to flip the sign convention here on uvw, since we use a1-a2 versus the
@@ -281,19 +295,53 @@ class Mir(UVData):
         # todo: Raw data is in correlation coefficients, we may want to convert to Jy.
         self.vis_units = "uncalib"
 
-        self._set_phased()
-
         sou_list = mir_data.codes_data[mir_data.codes_data["v_name"] == b"source"]
 
-        self.object_name = sou_list[sou_list["icode"] == isource]["code"][0].decode(
-            "utf-8"
+        self.object_name = [
+            sou_list[sou_list["icode"] == idx]["code"][0].decode("utf-8")
+            for idx in isource
+        ]
+        object_dict = {}
+        for idx in range(len(isource)):
+            source_mask = mir_data.in_data["isource"] == isource[idx]
+            object_name = self.object_name[idx]
+            object_ra = np.mean(mir_data.in_data["rar"][source_mask])
+            object_dec = np.mean(mir_data.in_data["decr"][source_mask])
+            coord_epoch = np.mean(mir_data.in_data["epoch"][source_mask])
+            object_dict[object_name] = {
+                "object_type": "sidereal",
+                "object_name": object_name,
+                "object_ra": object_ra,
+                "object_dec": object_dec,
+                "coord_frame": "icrs",  # default for SMA datasets (verify)
+                "coord_epoch": coord_epoch,
+            }
+
+        self.object_dict = object_dict
+
+        # Regenerate the sou_id_array thats native to MIR into a zero-indexed per-blt
+        # entry for UVData, then grab ra/dec/position data.
+        object_id_array = mir_data.in_data["isource"][bl_in_maparr[:: 1 + dsb_spws]]
+        object_id_dict = {isource[idx]: idx for idx in range(len(isource))}
+        object_id_array = np.array(
+            [object_id_dict[key] for key in object_id_array], dtype=np.int
         )
+        self.object_id_array = object_id_array.astype(np.int)
 
-        self.phase_center_ra = mir_data.in_data["rar"][0]
-        self.phase_center_dec = mir_data.in_data["decr"][0]
-        self.phase_center_epoch = mir_data.in_data["epoch"][0]
+        self.Nsources = len(self.object_name)
+        self.phase_center_ra = 0.0  # This are ignored w/ multi-obj data sets
+        self.phase_center_dec = 0.0  # This are ignored w/ multi-obj data sets
+        self.phase_center_epoch = 2000.0  # This are ignored w/ multi-obj data sets
+        self.phase_center_frame = "icrs"
 
-        self.phase_center_epoch = float(self.phase_center_epoch)
+        # Fill in the apparent coord calculations
+        self.phase_center_app_ra = mir_data.in_data["rar"][
+            bl_in_maparr[:: 1 + dsb_spws]
+        ]
+        self.phase_center_app_dec = mir_data.in_data["decr"][
+            bl_in_maparr[:: 1 + dsb_spws]
+        ]
+
         self.antenna_diameters = np.zeros(self.Nants_telescope) + 6
         self.blt_order = ("time", "baseline")
 
