@@ -328,7 +328,7 @@ class Mir(UVData):
         )
         self.object_id_array = object_id_array.astype(np.int)
 
-        self.Nsources = len(self.object_name)
+        self.Nobjects = len(self.object_name)
         self.phase_center_ra = 0.0  # This are ignored w/ multi-obj data sets
         self.phase_center_dec = 0.0  # This are ignored w/ multi-obj data sets
         self.phase_center_epoch = 2000.0  # This are ignored w/ multi-obj data sets
