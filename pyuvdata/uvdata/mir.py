@@ -4,6 +4,7 @@
 
 """Class for reading and writing Mir files."""
 import numpy as np
+from itertools import compress
 
 from .uvdata import UVData
 from . import mir_parser
@@ -134,14 +135,18 @@ class Mir(UVData):
 
         # Create a simple array/list for broadcasting values stored on a
         # per-blt basis into per-spw records, and per-time into per-blt records
-        sp_bl_maparr = [mir_data.blhid_dict[idx] for idx in mir_data.sp_data["blhid"]]
-        bl_in_maparr = [mir_data.inhid_dict[idx] for idx in mir_data.bl_data["inhid"]]
-
+        sp_bl_maparr = np.array(
+            [mir_data.blhid_dict[idx] for idx in mir_data.sp_data["blhid"]]
+        )
+        bl_in_maparr = np.array(
+            [mir_data.inhid_dict[idx] for idx in mir_data.bl_data["inhid"]]
+        )
         # Different sidebands in MIR are (strangely enough) recorded as being
         # different baseline records. To be compatible w/ UVData, we just splice
         # the sidebands together.
         corrchunk_sb = [idx for jdx in sorted(isb) for idx in [jdx] * len(corrchunk)]
         corrchunk *= 1 + dsb_spws
+        sb_screen = mir_data.bl_data["isb"] == isb[0]
 
         # Here we'll want to construct a simple dictionary, that'll basically help us
         # to construct the frequency axis, and map the UVData spectral window ID number
@@ -221,12 +226,8 @@ class Mir(UVData):
         self.Npols = 1  # todo: We will need to go back and expand this.
         self.Nspws = len(corrchunk)
         self.Ntimes = len(mir_data.in_data)
-        self.ant_1_array = (
-            mir_data.bl_data["iant1"][mir_data.bl_data["isb"] == isb[0]] - 1
-        )
-        self.ant_2_array = (
-            mir_data.bl_data["iant2"][mir_data.bl_data["isb"] == isb[0]] - 1
-        )
+        self.ant_1_array = mir_data.bl_data["iant1"][sb_screen] - 1
+        self.ant_2_array = mir_data.bl_data["iant2"][sb_screen] - 1
         self.antenna_names = [
             "Ant 1",
             "Ant 2",
@@ -277,7 +278,7 @@ class Mir(UVData):
         self.spw_array = np.arange(len(corrchunk))
 
         self.telescope_name = "SMA"
-        time_array_mjd = mir_data.in_read["mjd"][bl_in_maparr[:: 1 + dsb_spws]]
+        time_array_mjd = mir_data.in_read["mjd"][bl_in_maparr[sb_screen]]
         self.time_array = time_array_mjd + 2400000.5
 
         # Need to flip the sign convention here on uvw, since we use a1-a2 versus the
@@ -285,9 +286,9 @@ class Mir(UVData):
         self.uvw_array = (-1.0) * np.transpose(
             np.vstack(
                 (
-                    mir_data.bl_data["u"][:: 1 + dsb_spws],
-                    mir_data.bl_data["v"][:: 1 + dsb_spws],
-                    mir_data.bl_data["w"][:: 1 + dsb_spws],
+                    mir_data.bl_data["u"][sb_screen],
+                    mir_data.bl_data["v"][sb_screen],
+                    mir_data.bl_data["w"][sb_screen],
                 )
             )
         )
@@ -321,7 +322,7 @@ class Mir(UVData):
 
         # Regenerate the sou_id_array thats native to MIR into a zero-indexed per-blt
         # entry for UVData, then grab ra/dec/position data.
-        object_id_array = mir_data.in_data["isource"][bl_in_maparr[:: 1 + dsb_spws]]
+        object_id_array = mir_data.in_data["isource"][bl_in_maparr[sb_screen]]
         object_id_dict = {isource[idx]: idx for idx in range(len(isource))}
         object_id_array = np.array(
             [object_id_dict[key] for key in object_id_array], dtype=np.int
@@ -335,20 +336,40 @@ class Mir(UVData):
         self.phase_center_frame = "icrs"
 
         # Fill in the apparent coord calculations
-        self.phase_center_app_ra = mir_data.in_data["rar"][
-            bl_in_maparr[:: 1 + dsb_spws]
-        ]
-        self.phase_center_app_dec = mir_data.in_data["decr"][
-            bl_in_maparr[:: 1 + dsb_spws]
-        ]
+        self.phase_center_app_ra = mir_data.in_data["rar"][bl_in_maparr[sb_screen]]
+        self.phase_center_app_dec = mir_data.in_data["decr"][bl_in_maparr[sb_screen]]
 
         self.antenna_diameters = np.zeros(self.Nants_telescope) + 6
         self.blt_order = ("time", "baseline")
 
         # TODO: Spw axis to be collapsed in future release
-        data_array = np.reshape(
-            np.concatenate(mir_data.vis_data), (self.Nblts, 1, self.Nfreqs, self.Npols),
-        )
+        if dsb_spws:
+            # Gotta do a little bit of sleight-of-hand here, on account of
+            # the fact that the ordering of the sidebands makes absolutely
+            # no sense.
+            data_array = np.concatenate(
+                (
+                    np.reshape(
+                        np.concatenate(
+                            list(compress(mir_data.vis_data, sb_screen[sp_bl_maparr])),
+                        ),
+                        (self.Nblts, 1, self.Nfreqs // 2, self.Npols),
+                    ),
+                    np.reshape(
+                        np.concatenate(
+                            list(compress(mir_data.vis_data, ~sb_screen[sp_bl_maparr])),
+                        ),
+                        (self.Nblts, 1, self.Nfreqs // 2, self.Npols),
+                    ),
+                ),
+                axis=2,
+            )
+        else:
+            # If single sideband, then this is a pretty simple operation
+            data_array = np.reshape(
+                np.concatenate(mir_data.vis_data),
+                (self.Nblts, 1, self.Nfreqs, self.Npols),
+            )
 
         # Don't need the data anymore, so drop it
         mir_data.unload_data()
