@@ -2070,7 +2070,7 @@ def calc_uvw(
                 "coordinates!"
             )
 
-    if use_ant_pos is None:
+    if use_ant_pos:
         # Assume at this point we are dealing w/ antenna positions
         if antenna_positions is None:
             raise ValueError("Must include antenna_positions if use_ant_pos=True.")
@@ -2107,11 +2107,11 @@ def calc_uvw(
             # Unphased coordinates appear to be stored in ENU coordinates -- that's
             # equivalent to calculating uvw's based on zenith. We can use that to our
             # advantage and spoof the gha and dec based on telescope lon and lat
-            unique_gha = np.zeros(N_ants) + telescope_lon
+            unique_gha = np.zeros(N_ants) - telescope_lon
             unique_dec = np.zeros_like(unique_gha) + telescope_lat
         else:
             unique_gha = np.repeat(
-                (lst_array[unique_mask] - app_ra[unique_mask]) + telescope_lon, N_ants
+                (lst_array[unique_mask] - app_ra[unique_mask]) - telescope_lon, N_ants
             )
             unique_dec = np.repeat(app_dec[unique_mask], N_ants)
 
@@ -2124,7 +2124,7 @@ def calc_uvw(
         # and GHA.
         if N_unique > (len(unique_mask) / N_ants):
             uvw_array = antenna_positions[ant_2_array] - antenna_positions[ant_1_array]
-            gha_array = (0.0 if to_enu else (lst_array - app_ra)) + telescope_lon
+            gha_array = (0.0 if to_enu else (lst_array - app_ra)) - telescope_lon
             new_coords = rotate_two_axis(
                 uvw_array, gha_array, telescope_lat if to_enu else app_dec, 2, 1,
             )
