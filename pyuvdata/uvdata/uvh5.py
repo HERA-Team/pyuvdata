@@ -7,6 +7,7 @@ import numpy as np
 import os
 import warnings
 import h5py
+from ast import literal_eval
 
 from .uvdata import UVData
 from .. import utils as uvutils
@@ -400,9 +401,6 @@ class UVH5(UVData):
         self.instrument = bytes(header["instrument"][()]).decode("utf8")
         self.telescope_name = bytes(header["telescope_name"][()]).decode("utf8")
 
-        # get source information
-        self.object_name = bytes(header["object_name"][()]).decode("utf8")
-
         # set history appropriately
         self.history = bytes(header["history"][()]).decode("utf8")
         if not uvutils._check_history_version(self.history, self.pyuvdata_version_str):
@@ -445,30 +443,59 @@ class UVH5(UVData):
                 header["eq_coeffs_convention"][()]
             ).decode("utf8")
 
-        # We've added a new keyword that did not exist before, so check to see if it
-        # is in the header, and if not, mark the data set as being "regular" (i.e.,
-        # not a flexible spectral window setup).
+        # We've added a few new keywords that did not exist before, so check to see if
+        # it is in the header, and if not, mark the data set as being "regular" (e.g.,
+        # not a flexible spectral window setup, single source only).
         if "flex_spw" in header:
             if bool(header["flex_spw"][()]):
                 self._set_flex_spw()
         if "flex_spw_id_array" in header:
-            self.flex_spw_id_array = header["flex_spw_id_array"][()]
+            self.flex_spw_id_array = header["flex_spw_id_array"][:]
+        if "multi_object" in header:
+            if bool(header["multi_object"][()]):
+                self._set_phased()
+                self._set_multi_object(preserve_source_info=False)
+        if "Nobjects" in header:
+            self.Nobjects = int(header["Nobjects"][()])
 
         # check for phasing information
         self.phase_type = bytes(header["phase_type"][()]).decode("utf8")
+        # Here is where we handle the source information.  If we have a multi-object
+        # dataset, this information is going to be handled a bit differently, since
+        # all of these entries are expected to be required arrays.
         if self.phase_type == "phased":
-            self._set_phased()
             self.phase_center_ra = float(header["phase_center_ra"][()])
             self.phase_center_dec = float(header["phase_center_dec"][()])
             self.phase_center_epoch = float(header["phase_center_epoch"][()])
-            if "phase_center_frame" in header:
-                self.phase_center_frame = bytes(
-                    header["phase_center_frame"][()]
-                ).decode("utf8")
+            if self.multi_object:
+                self.object_name = [
+                    bytes(name).decode("utf8") for name in header["object_name"][:]
+                ]
+                self.object_id_array = header["object_id_array"][:]
+            else:
+                self.object_name = bytes(header["object_name"][()]).decode("utf8")
+            self._set_phased()
+            if "phase_center_app_ra" in header and "phase_center_app_dec" in header:
+                self.phase_center_app_ra = header["phase_center_app_ra"][:]
+                self.phase_center_app_dec = header["phase_center_app_dec"][:]
+            else:
+                pass
         elif self.phase_type == "drift":
             self._set_drift()
         else:
             self._set_unknown_phase_type()
+
+        # Here is where we collect the other optional source/phasing info
+        if "object_dict" in header:
+            self.object_dict = {}
+            for key in header["object_dict"].keys():
+                self.object_dict[key] = literal_eval(
+                    bytes(header["object_dict"][key][()]).decode("utf8")
+                )
+        if "phase_center_frame" in header:
+            self.phase_center_frame = bytes(header["phase_center_frame"][()]).decode(
+                "utf8"
+            )
 
         # get antenna arrays
         # cast to native python int type
@@ -1065,6 +1092,7 @@ class UVH5(UVData):
         header["ant_2_array"] = self.ant_2_array
         header["antenna_positions"] = self.antenna_positions
         header["flex_spw"] = self.flex_spw
+        header["multi_object"] = self.multi_object
         # handle antenna_names; works for lists or arrays
         header["antenna_names"] = np.asarray(self.antenna_names, dtype="bytes")
 
@@ -1072,8 +1100,12 @@ class UVH5(UVData):
         header["phase_type"] = np.string_(self.phase_type)
         if self.phase_center_ra is not None:
             header["phase_center_ra"] = self.phase_center_ra
+        if self.phase_center_app_ra is not None:
+            header["phase_center_app_ra"] = self.phase_center_app_ra
         if self.phase_center_dec is not None:
             header["phase_center_dec"] = self.phase_center_dec
+        if self.phase_center_app_dec is not None:
+            header["phase_center_app_dec"] = self.phase_center_app_dec
         if self.phase_center_epoch is not None:
             header["phase_center_epoch"] = self.phase_center_epoch
         if self.phase_center_frame is not None:
@@ -1104,6 +1136,19 @@ class UVH5(UVData):
             header["eq_coeffs_convention"] = np.string_(self.eq_coeffs_convention)
         if self.flex_spw_id_array is not None:
             header["flex_spw_id_array"] = self.flex_spw_id_array
+        if self.object_id_array is not None:
+            header["object_id_array"] = self.object_id_array
+        if self.Nobjects is not None:
+            header["Nobjects"] = self.Nobjects
+
+        # Write out object dictionary, if available
+        if self.object_dict:
+            object_dict = header.create_group("object_dict")
+            for k in self.object_dict.keys():
+                # Dictionary entries can be written out as strings, in what is
+                # effectively JSON format. The str promotion up front is needed
+                # because otherwise np.string_ trucncates the dictionary
+                object_dict[k] = np.string_(str(self.object_dict[k]))
 
         # write out extra keywords if it exists and has elements
         if self.extra_keywords:
