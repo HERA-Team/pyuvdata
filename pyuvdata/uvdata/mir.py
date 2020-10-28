@@ -5,6 +5,7 @@
 """Class for reading and writing Mir files."""
 import numpy as np
 from itertools import compress
+from astropy.time import Time
 
 from .uvdata import UVData
 from . import mir_parser
@@ -279,7 +280,8 @@ class Mir(UVData):
 
         self.telescope_name = "SMA"
         time_array_mjd = mir_data.in_read["mjd"][bl_in_maparr[sb_screen]]
-        self.time_array = time_array_mjd + 2400000.5
+
+        self.time_array = Time(time_array_mjd, scale="tt", format="mjd").utc.jd
 
         # Need to flip the sign convention here on uvw, since we use a1-a2 versus the
         # standard a2-a1 that uvdata expects
