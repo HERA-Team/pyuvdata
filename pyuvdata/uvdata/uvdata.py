@@ -409,7 +409,7 @@ class UVData(UVBase):
             "phase_center_app_ra",
             required=False,
             form=("Nblts",),
-            expected_type=np.float64,
+            expected_type=np.float,
             description=desc,
             tols=radian_tol,
         )
@@ -654,7 +654,7 @@ class UVData(UVBase):
         # Now make sure that chan_width is set to be an array
         self._channel_width.form = ("Nfreqs",)
 
-    def _set_multi_object(self, preserve_source_info=True):
+    def _set_multi_object(self, preserve_source_info=False):
         """
         Set multi_object to True, and adjust required paramteres.
 
@@ -680,6 +680,8 @@ class UVData(UVBase):
         self._object_id_array.required = True
         self._Nobjects.required = True
         self._object_dict.required = True
+        self._object_name.expected_type = str
+        self._object_name.form = ("Nobjects",)
 
         if preserve_source_info:
             if self.phase_type == "phased":
@@ -933,7 +935,7 @@ class UVData(UVBase):
             A boolean mask for identifying which elements contain unphased objects
         """
         # Gotta be a multi-object data set for this operation to even make sense
-        if not self.mutli_object:
+        if not self.multi_object:
             raise TypeError("Cannot remove an object if multi_object != True.")
 
         # Check and see if we have any unphased objects, in which case
@@ -3564,18 +3566,18 @@ class UVData(UVBase):
             select_mask, or if select mask isn't the right length.
         """
         # If we only have metadata, then we have no work to do. W00t!
-        if not self.metadata_only:
+        if (not self.metadata_only) or (self.data_array is None):
             return
 
         # Promote everything to float64 ndarrays if they aren't already
         if not isinstance(new_w_vals, np.ndarray):
             new_w_vals = np.array([new_w_vals], dtype=np.float64)
         if not isinstance(new_w_vals[0], np.float64):
-            new_w_vals = new_w_vals.as_type(np.float64)
+            new_w_vals = new_w_vals.astype(np.float64)
         if not isinstance(old_w_vals, np.ndarray):
             old_w_vals = np.array([old_w_vals], dtype=np.float64)
         if not isinstance(old_w_vals[0], np.float64):
-            old_w_vals = old_w_vals.as_type(np.float64)
+            old_w_vals = old_w_vals.astype(np.float64)
 
         # Make sure the lengths of everything make sense
         new_val_len = len(new_w_vals)
@@ -3602,7 +3604,6 @@ class UVData(UVBase):
             * (1.0 / const.c.to("m/s").value)
             * self.freq_array.reshape(1, self.Nfreqs)
         )
-
         if select_mask is None or np.all(select_mask):
             # If all the w values are changing, it turns out to be twice as fast
             # to ditch any sort of selection mask and just do the full multiply.
@@ -3696,7 +3697,7 @@ class UVData(UVBase):
                 if allow_phasing:
                     old_w_vals = self.uvw_array[:, 2].copy()
                     if self.multi_object:
-                        old_w_vals[self._check_for_unphased_objects] = 0.0
+                        old_w_vals[self._check_for_unphased_objects()] = 0.0
                     self._apply_w_proj(new_uvw[:, 2], old_w_vals)
             # If the data are phased, we've already adjusted the phases. Now we just
             # need to update the uvw's and we are home free.
