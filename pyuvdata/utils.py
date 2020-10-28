@@ -1975,11 +1975,17 @@ def get_lst_for_time(jd_array, latitude, longitude, altitude, use_astropy=False)
 
         for idx in range(len(times)):
             novas.cel_pole(tt_time_array[idx], 2, pm_x_array[idx], pm_y_array[idx])
+            # The NOVAS routine will return Greenwich Apparent Sidereal Time (GAST),
+            # in units of hours
             lst_array[reverse_inds == idx] = novas.sidereal_time(
                 ut1_time_array[idx],
                 0.0,
                 (tt_time_array[idx] - ut1_time_array[idx]) * 86400.0,
             )
+
+        # Add the telescope lon to convert from GAST to LAST (local)
+        lst_array = np.mod(lst_array + (longitude / 15.0), 24.0)
+
         # Convert from hours back to rad
         lst_array *= np.pi / 12.0
 
