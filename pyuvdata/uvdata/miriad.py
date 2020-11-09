@@ -57,7 +57,8 @@ class Miriad(UVData):
         check_extra=True,
         run_check_acceptability=True,
         strict_uvw_antpos_check=False,
-        skip_extra_sources=False,
+        calc_lst=True,
+        multi_object=False,
     ):
         """
         Read in data from a miriad file.
@@ -124,10 +125,14 @@ class Miriad(UVData):
         strict_uvw_antpos_check : bool
             Option to raise an error rather than a warning if the check that
             uvws match antenna positions does not pass.
-        skip_extra_sources : bool
-            As multiple sources are not (yet) supported, this will simply allow
-            the reader to read just the first source in the dataset, rather than
-            throwing an exception. Default is false.
+        calc_lst : bool
+            Recalculate the LST values that are present within the file, useful in
+            cases where the "online" calculate values have precision or value errors.
+            Default is True.
+        multi_object : bool
+            Forces the UVData object to be marked as multi-object type (where the
+            attribute multi_object is set to True). This produces some minor changes
+            in the way that the data (in particular, source info) are handled.
 
         Raises
         ------
@@ -162,7 +167,7 @@ class Miriad(UVData):
             return
 
         # read through the file and get the data
-        _source = uv["source"]  # check source of initial visibility
+        # _source = uv["source"]  # check source of initial visibility
 
         history_update_string = "  Downselected to specific "
         n_selects = 0
@@ -333,7 +338,17 @@ class Miriad(UVData):
 
         data_accumulator = {}
         pol_list = []
-        warn_extra_sources = True
+        app_ra = None
+        app_dec = None
+        epoch = None
+        sou_dict = {}
+        Nobjects = 0
+        record_epoch = "epoch" in uv.vartable.keys()
+        record_app = ("obsra" in uv.vartable.keys()) and (
+            "obsdec" in uv.vartable.keys()
+        )
+        # dra_list - Stubbing out for later
+        # ddec_list - Stubbing out for later
         for (uvw, t, (i, j)), d, f in uv.all_data(raw=True):
             # control for the case of only a single spw not showing up in
             # the dimension
@@ -347,7 +362,7 @@ class Miriad(UVData):
             # this array should ever _not_ be 1D, but the below does cast the shape of
             # the data array correctly so that the vestigial spw-axis is preserved. At
             # some point, the below will need to be fixed -- I'm keeping this here so
-            # that I can skip reading through the MIRIAD programmers guide yet aagain.
+            # that I can skip reading through the MIRIAD programmers guide yet again.
             if len(d.shape) == 1:
                 d.shape = (1,) + d.shape
 
@@ -359,29 +374,27 @@ class Miriad(UVData):
                 cnt = np.ones(d.shape, dtype=np.float)
             ra = uv["ra"]
             dec = uv["dec"]
+            if record_epoch:
+                epoch = uv["epoch"]
+            if record_app:
+                app_ra = uv["obsra"]
+                app_dec = uv["obsdec"]
             # NOTE: Using our lst calculator, which uses astropy,
             # instead of _miriad values which come from pyephem.
             # The differences are of order 5 seconds.
             # To use the values from the file you'd want: lst = uv['lst']
+            # N.B. (Karto): So the above is true (presumably) for PAPER/HERA, although
+            # not every miriad-supporting facility uses pyephem for LAST generation.
+            # I've changed this to be a switch rather than always having the code
+            # recalculate these values.
+            lst = uv["lst"]
             inttime = uv["inttime"]
-            source = uv["source"]
-            if source != _source:
-                if skip_extra_sources:
-                    if warn_extra_sources:
-                        warnings.warn(
-                            "File containts more than one source, only using data "
-                            "where source = %s" % _source
-                        )
-                        warn_extra_sources = False
-                    continue
-                raise NotImplementedError(
-                    "This appears to be a multi source file, which is not supported. "
-                    "You can bypass this error bu using skip_extra_sources=True to "
-                    "read in only the data belonging to the first source in the data "
-                    "set (and skip data from other sources)."
-                )
-            else:
-                _source = source
+            try:
+                sou_id = sou_dict[uv["source"]]
+            except KeyError:
+                sou_dict[uv["source"]] = Nobjects
+                sou_id = Nobjects
+                Nobjects += 1
 
             # check extra variables for changes compared with initial value
             for extra_variable in list(check_variables.keys()):
@@ -395,12 +408,48 @@ class Miriad(UVData):
                         check_variables.pop(extra_variable)
 
             try:
+                # TODO: Gotta clean this up at some point - there are going to be
+                # addition things to stick into the metadata accumulator, and accessing
+                # those values by index number will likely make it more difficult to
+                # maintain/expand the code in the future.
                 data_accumulator[uv["pol"]].append(
-                    [uvw, t, i, j, d, f, cnt, ra, dec, inttime]
+                    [
+                        uvw,  # Entry 0
+                        t,  # Entry 1
+                        i,  # Entry 2
+                        j,  # Entry 3
+                        d,  # Entry 4
+                        f,  # Entry 5
+                        cnt,  # Entry 6
+                        ra,  # Entry 7
+                        dec,  # Entry 8
+                        inttime,  # Entry 9
+                        sou_id,  # Entry 10
+                        epoch,  # Entry 11
+                        app_ra,  # Entry 12
+                        app_dec,  # Entry 13
+                        lst,  # Entry 14
+                    ]
                 )
             except (KeyError):
                 data_accumulator[uv["pol"]] = [
-                    [uvw, t, i, j, d, f, cnt, ra, dec, inttime]
+                    [
+                        uvw,  # Entry 0
+                        t,  # Entry 1
+                        i,  # Entry 2
+                        j,  # Entry 3
+                        d,  # Entry 4
+                        f,  # Entry 5
+                        cnt,  # Entry 6
+                        ra,  # Entry 7
+                        dec,  # Entry 8
+                        inttime,  # Entry 9
+                        sou_id,  # Entry 10
+                        epoch,  # Entry 11
+                        app_ra,  # Entry 12
+                        app_dec,  # Entry 13
+                        lst,  # Entry 14
+                    ]
                 ]
                 pol_list.append(uv["pol"])
                 # NB: flag types in miriad are usually ints
@@ -558,7 +607,7 @@ class Miriad(UVData):
         # instead of _miriad values which come from pyephem.
         # The differences are of order 5 seconds.
         proc = None
-        if self.telescope_location is not None:
+        if (self.telescope_location is not None) and calc_lst:
             proc = self.set_lsts_from_time_array(background=background_lsts)
         self.nsample_array = np.ones(self.data_array.shape, dtype=np.float)
 
@@ -566,6 +615,12 @@ class Miriad(UVData):
         ra_pol_list = np.zeros((self.Nblts, self.Npols))
         dec_pol_list = np.zeros((self.Nblts, self.Npols))
         uvw_pol_list = np.zeros((self.Nblts, 3, self.Npols))
+        sou_id_pol_list = np.zeros((self.Nblts, self.Npols), dtype=np.int)
+        epoch_pol_list = np.zeros((self.Nblts, self.Npols))
+        app_ra_pol_list = np.zeros((self.Nblts, self.Npols))
+        app_dec_pol_list = np.zeros((self.Nblts, self.Npols))
+        lst_pol_list = np.zeros((self.Nblts, self.Npols))
+
         c_ns = const.c.to("m/ns").value
         for pol, data in data_accumulator.items():
             pol_ind = self._pol_to_ind(pol)
@@ -591,19 +646,38 @@ class Miriad(UVData):
                 uvw_pol_list[blt_index, :, pol_ind] = uvw
                 ra_pol_list[blt_index, pol_ind] = d[7]
                 dec_pol_list[blt_index, pol_ind] = d[8]
+                sou_id_pol_list[blt_index, pol_ind] = d[10]
+                epoch_pol_list[blt_index, pol_ind] = d[11]
+                app_ra_pol_list[blt_index, pol_ind] = d[12]
+                app_dec_pol_list[blt_index, pol_ind] = d[13]
+                lst_pol_list[blt_index, pol_ind] = d[14]
 
         # Collapse pol axis for ra_list, dec_list, and uvw_list
         ra_list = np.zeros(self.Nblts)
         dec_list = np.zeros(self.Nblts)
+        sou_id_list = np.zeros(self.Nblts)
+        epoch_list = np.zeros(self.Nblts)
+        app_ra_list = np.zeros(self.Nblts)
+        app_dec_list = np.zeros(self.Nblts)
+        lst_list = np.zeros(self.Nblts)
+
         for blt_index in range(self.Nblts):
             test = ~np.all(self.flag_array[blt_index, :, :, :], axis=(0, 1))
             good_pol = np.where(test)[0]
+            if len(good_pol) == 0:
+                # No good pols for this blt. Fill with first one.
+                good_pol = np.array([0])
             if len(good_pol) == 1:
                 # Only one good pol, use it
                 self.uvw_array[blt_index, :] = uvw_pol_list[blt_index, :, good_pol]
                 ra_list[blt_index] = ra_pol_list[blt_index, good_pol]
                 dec_list[blt_index] = dec_pol_list[blt_index, good_pol]
-            elif len(good_pol) > 1:
+                sou_id_list[blt_index] = sou_id_pol_list[blt_index, good_pol]
+                epoch_list[blt_index] = epoch_pol_list[blt_index, good_pol]
+                app_ra_list[blt_index] = app_ra_pol_list[blt_index, good_pol]
+                app_dec_list[blt_index] = app_dec_pol_list[blt_index, good_pol]
+                lst_list[blt_index] = lst_pol_list[blt_index, good_pol]
+            else:
                 # Multiple good pols, check for consistency. pyuvdata does not
                 # support pol-dependent uvw, ra, or dec.
                 if np.any(np.diff(uvw_pol_list[blt_index, :, good_pol], axis=0)):
@@ -620,11 +694,33 @@ class Miriad(UVData):
                     raise ValueError("dec values are different by polarization.")
                 else:
                     dec_list[blt_index] = dec_pol_list[blt_index, good_pol[0]]
-            else:
-                # No good pols for this blt. Fill with first one.
-                self.uvw_array[blt_index, :] = uvw_pol_list[blt_index, :, 0]
-                ra_list[blt_index] = ra_pol_list[blt_index, 0]
-                dec_list[blt_index] = dec_pol_list[blt_index, 0]
+                # Check source IDs
+                if np.any(np.diff(sou_id_pol_list[blt_index, good_pol])):
+                    raise ValueError("source values are different by polarization.")
+                else:
+                    sou_id_list[blt_index] = sou_id_pol_list[blt_index, good_pol[0]]
+                # Check epochs if needed
+                if record_epoch:
+                    if np.any(np.diff(epoch_pol_list[blt_index, good_pol])):
+                        raise ValueError("epochs vals are different by polarization.")
+                    else:
+                        epoch_list[blt_index] = epoch_pol_list[blt_index, good_pol[0]]
+                # Check apparent coordinates
+                if record_app:
+                    if np.any(np.diff(app_ra_pol_list[blt_index, good_pol])):
+                        raise ValueError("app ra vals are different by polarization.")
+                    else:
+                        app_ra_list[blt_index] = app_ra_pol_list[blt_index, good_pol[0]]
+                    if np.any(np.diff(app_dec_pol_list[blt_index, good_pol])):
+                        raise ValueError("app dec vals are different by polarization.")
+                    else:
+                        app_dec_list[blt_index] = app_dec_pol_list[
+                            blt_index, good_pol[0]
+                        ]
+                if np.any(np.diff(lst_pol_list[blt_index, good_pol])):
+                    raise ValueError("source values are different by polarization.")
+                else:
+                    lst_list[blt_index] = lst_pol_list[blt_index, good_pol[0]]
 
         # get unflagged blts
         # If we have a 1-baseline, single integration data set, set single_ra and
@@ -645,6 +741,8 @@ class Miriad(UVData):
         if phase_type is not None:
             if phase_type == "phased":
                 self._set_phased()
+                if Nobjects > 1:
+                    self._set_multi_object()
             elif phase_type == "drift":
                 self._set_drift()
             else:
@@ -654,12 +752,15 @@ class Miriad(UVData):
                     "reflect the phasing status of the data"
                 )
         else:
-            # check if ra is constant throughout file; if it is,
-            # file is tracking if not, file is drift scanning
-            # check if there's only one unflagged time
+            # check if ra is constant throughout file OR if there are multiple sources
+            # listed; if the obs meets either of those conditions, then assume that the
+            # file is tracking, and if not, assume that the  file is drift scanning,
+            # checking if there's only one unflagged time
             if not single_time:
-                if single_ra:
+                if single_ra or ((Nobjects > 1) or multi_object):
                     self._set_phased()
+                    if Nobjects > 1:
+                        self._set_multi_object()
                 else:
                     self._set_drift()
             else:
@@ -674,7 +775,45 @@ class Miriad(UVData):
         if proc is not None:
             proc.join()
 
-        if self.phase_type == "phased":
+        if (self.telescope_location is None) or not calc_lst:
+            self.lst_array = lst_list
+        if record_app and (self.phase_type == "phased"):
+            self.phase_center_app_ra = app_ra_list
+            self.phase_center_app_dec = app_dec_list
+
+        print(ra_list)
+        print(dec_list)
+        print(epoch_list)
+
+        if self.multi_object:
+            # This presupposes that the data are already phased
+            self.phase_center_ra = 0.0  # This isn't used for multi-obj data
+            self.phase_center_dec = 0.0  # This isn't used for multi-obj data
+            # The concept of an epoch is kinda weird in multi-obj datasets, because
+            # different sources are allowed to have different epochs. Just set it to
+            # the median value for now. Eventually, I think this should be used as the
+            # "if your format forces me to use FK5, here's the epoch" value. Note that
+            # MIRIAD, AIPS, and (I think) CASA tasks assume the coordinates are given
+            # in FK5 format (well, unless epoch <= 1984, in which case MIRIAD assumes
+            # in semi-Orwellian fashion that you _really_ wanted FK4/Bessel-Newcomb).
+            self.phase_center_epoch = np.median(epoch_list)
+            self.object_id_array = sou_id_list.astype(np.int)
+            self.Nobjects = Nobjects
+            flip_dict = {sou_dict[key]: key for key in sou_dict.keys()}
+            self.object_name = [flip_dict[key] for key in range(Nobjects)]
+            # Here is where we should package up sources
+            object_dict = {}
+            for idx in range(Nobjects):
+                select_mask = sou_id_list == idx
+                object_dict[self.object_name[idx]] = {
+                    "object_type": "sidereal",
+                    "object_lon": np.mean(ra_list[select_mask]),
+                    "object_lat": np.mean(dec_list[select_mask]),
+                    "coord_frame": "fk5",
+                    "coord_epoch": np.mean(epoch_list[select_mask]),
+                }
+            self.object_dict = object_dict
+        elif self.phase_type == "phased":
             # check that the RA values do not vary
             if not single_ra:
                 raise ValueError(
@@ -718,6 +857,11 @@ class Miriad(UVData):
 
         # close out now that we're done
         uv.close()
+
+        if not record_app and (self.phase_type == "phased"):
+            # TODO: If we don't have apparent coordinates, figure out whether or not we
+            # want to try and generate them (similar to how LSTs are generated)
+            self._set_app_coords_helper()
 
         try:
             self.set_telescope_params()
