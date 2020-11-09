@@ -691,9 +691,8 @@ class UVData(UVBase):
                 self.object_name = [self.object_name]
                 object_dict = {
                     "object_type": "sidereal",
-                    "object_name": self.object_name[0],
-                    "object_ra": self.phase_center_ra,
-                    "object_dec": self.phase_center_dec,
+                    "object_lon": self.phase_center_ra,
+                    "object_lat": self.phase_center_dec,
                     "coord_frame": self.phase_center_frame,
                     "coord_epoch": self.phase_center_epoch,
                 }
@@ -1186,8 +1185,45 @@ class UVData(UVBase):
             Use astropy for the calculation of apparent coordiantes (setting this to
             false will instead call NOVAS).
         """
-        if self.multi_source:
-            pass
+        if self.multi_object:
+            app_ra = np.zeros(self.Nblts, dtype=np.float)
+            app_dec = np.zeros(self.Nblts, dtype=np.float)
+            for idx in np.unique(self.object_id_array):
+                if (idx < 0) or (idx > len(self.object_name)):
+                    raise IndexError(
+                        "object_id_array contains index values that do not match what"
+                        "is in object_name/object_dict!"
+                    )
+                temp_dict = self.object_dict[self.object_name[idx]]
+                temp_keys = temp_dict.keys()
+                select_mask = self.object_id_array == idx
+
+                object_type = temp_dict["object_type"]
+                lat_val = temp_dict["object_lat"] if "object_lat" in temp_keys else None
+                lon_val = temp_dict["object_lon"] if "object_lon" in temp_keys else None
+                epoch = temp_dict["coord_epoch"] if "coord_epoch" in temp_keys else None
+                frame = temp_dict["coord_frame"] if "coord_frame" in temp_keys else None
+                pm_ra = temp_dict["pm_ra"] if "pm_ra" in temp_keys else None
+                pm_dec = temp_dict["pm_dec"] if "pm_dec" in temp_keys else None
+                rad_vel = temp_dict["rad_vel"] if "rad_vel" in temp_keys else None
+                parallax = temp_dict["parallax"] if "parallax" in temp_keys else None
+                app_ra[select_mask], app_dec[select_mask] = uvutils.calc_app_coords(
+                    lon_val,
+                    lat_val,
+                    frame,
+                    coord_epoch=epoch,
+                    pm_ra=pm_ra,
+                    pm_dec=pm_dec,
+                    rad_vel=rad_vel,
+                    parallax=parallax,
+                    time_array=self.time_array[select_mask],
+                    lst_array=self.lst_array[select_mask],
+                    telescope_lat=self.telescope_location_lat_lon_alt[0],
+                    telescope_lon=self.telescope_location_lat_lon_alt[1],
+                    telescope_alt=self.telescope_location_lat_lon_alt[2],
+                    object_type=object_type,
+                    use_astropy=use_astropy,
+                )
         else:
             # So this is actually the easier of the two cases -- just use the object
             # properties to fill in the relevant data
@@ -1204,6 +1240,8 @@ class UVData(UVBase):
                 use_astropy=use_astropy,
                 object_type="sidereal",
             )
+        self.phase_center_ra_app = app_ra
+        self.phase_center_dec_app = app_dec
 
     def set_lsts_from_time_array(self, background=False):
         """Set the lst_array based from the time_array.
@@ -7084,7 +7122,6 @@ class UVData(UVBase):
         check_extra=True,
         run_check_acceptability=True,
         strict_uvw_antpos_check=False,
-        skip_extra_sources=False,
     ):
         """
         Read in data from a miriad file.
@@ -7155,10 +7192,6 @@ class UVData(UVBase):
         strict_uvw_antpos_check : bool
             Option to raise an error rather than a warning if the check that
             uvws match antenna positions does not pass.
-        skip_extra_sources : bool
-            As multiple sources are not (yet) supported, this will simply allow
-            the reader to read just the first source in the dataset, rather than
-            throwing an exception. Default is false.
 
         Raises
         ------
@@ -7198,7 +7231,6 @@ class UVData(UVBase):
             check_extra=check_extra,
             run_check_acceptability=run_check_acceptability,
             strict_uvw_antpos_check=strict_uvw_antpos_check,
-            skip_extra_sources=skip_extra_sources,
         )
         self._convert_from_filetype(miriad_obj)
         del miriad_obj
@@ -7816,7 +7848,6 @@ class UVData(UVBase):
         check_extra=True,
         run_check_acceptability=True,
         strict_uvw_antpos_check=False,
-        skip_extra_sources=False,
         isource=None,
         irec=None,
         isb=None,
@@ -8026,10 +8057,6 @@ class UVData(UVBase):
         strict_uvw_antpos_check : bool
             Option to raise an error rather than a warning if the check that
             uvws match antenna positions does not pass.
-        skip_extra_sources : bool
-            As multiple sources are not (yet) supported, this will simply allow
-            the reader to read just the first source in the dataset, rather than
-            throwing an exception. Default is false.
         isource : int
             Source code for MIR dataset
         irec : int
@@ -8440,7 +8467,6 @@ class UVData(UVBase):
                     check_extra=check_extra,
                     run_check_acceptability=run_check_acceptability,
                     strict_uvw_antpos_check=strict_uvw_antpos_check,
-                    skip_extra_sources=skip_extra_sources,
                 )
 
             elif file_type == "mwa_corr_fits":
