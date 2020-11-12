@@ -149,6 +149,8 @@ setup_args = {
     "install_requires": [
         "numpy>=1.18",
         "scipy",
+        "novas",
+        "novas_de405",
         "astropy>=3.2.3",
         "h5py",
         "setuptools_scm",
