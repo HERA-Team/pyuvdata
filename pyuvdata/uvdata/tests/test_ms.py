@@ -38,7 +38,7 @@ def test_cotter_ms():
     # check that a select on read works
     uvobj2 = UVData()
     with uvtest.check_warnings(UserWarning, "Warning: select on read keyword set"):
-        uvobj2.read(testfile, freq_chans=np.arange(2))
+        uvobj2.read(testfile, freq_chans=np.arange(2), use_astropy=False)
     uvobj.select(freq_chans=np.arange(2))
     assert uvobj == uvobj2
     del uvobj

@@ -436,6 +436,9 @@ class MS(UVData):
         if proc is not None:
             proc.join()
 
+        # Fill in the apparent coordinates here
+        self._set_app_coords_helper()
+
         # order polarizations
         self.reorder_pols(order=pol_order)
         if run_check:

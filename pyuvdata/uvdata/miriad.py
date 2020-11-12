@@ -803,10 +803,10 @@ class Miriad(UVData):
                 select_mask = sou_id_list == idx
                 object_dict[self.object_name[idx]] = {
                     "object_type": "sidereal",
-                    "object_lon": np.mean(ra_list[select_mask]),
-                    "object_lat": np.mean(dec_list[select_mask]),
+                    "object_lon": np.median(ra_list[select_mask]),
+                    "object_lat": np.median(dec_list[select_mask]),
                     "coord_frame": "fk5",
-                    "coord_epoch": np.mean(epoch_list[select_mask]),
+                    "coord_epoch": np.median(epoch_list[select_mask]),
                 }
             self.object_dict = object_dict
         elif self.phase_type == "phased":

@@ -170,23 +170,6 @@ def test_read_write_read_carma(tmp_path):
 
     uv_out.read(testfile)
 
-    # We have to do a bit of special handling for he object_dict, because (for reasons
-    # I don't fully understand) the last bit of the mantissa is different in the LAST
-    # bit for the object_lat and object_lon. \shrug
-    for object_name in uv_in.object_name:
-        assert np.isclose(
-            uv_in.object_dict[object_name]["object_lat"],
-            uv_out.object_dict[object_name]["object_lat"],
-        )
-        assert np.isclose(
-            uv_in.object_dict[object_name]["object_lon"],
-            uv_out.object_dict[object_name]["object_lon"],
-        )
-        uv_in.object_dict[object_name]["object_lat"] = 0.0
-        uv_in.object_dict[object_name]["object_lon"] = 0.0
-        uv_out.object_dict[object_name]["object_lat"] = 0.0
-        uv_out.object_dict[object_name]["object_lon"] = 0.0
-
     assert uv_in == uv_out
 
 

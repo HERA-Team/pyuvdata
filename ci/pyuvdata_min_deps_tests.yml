@@ -4,8 +4,6 @@ channels:
   - defaults
 dependencies:
   - astropy
-  - novas
-  - novas_de405
   - numpy
   - scipy
   - h5py
