@@ -9,6 +9,8 @@ dependencies:
   - cached-property
   - h5py
   - matplotlib
+  - novas
+  - novas_de405
   - numpy
   - pandas
   - pip
