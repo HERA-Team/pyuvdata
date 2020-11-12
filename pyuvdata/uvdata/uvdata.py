@@ -3354,17 +3354,6 @@ class UVData(UVBase):
                 "method, please set use_old_phase=False."
             )
 
-            # All done w/ the new phase method
-            return
-
-        # If you are a multi-object data set, there's no valid reason to be going
-        # back to the old phase method. Time to bail!
-        if self.multi_object:
-            raise NotImplementedError(
-                "Multi-object data sets are not compatible with the old phasing "
-                "method, please set use_old_phase=False."
-            )
-
         warnings.warn(
             "The original `phase` method will be deprecated in a future release. "
             "Note that the old and new phase methods are NOT compatible with one "
