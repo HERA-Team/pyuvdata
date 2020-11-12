@@ -6,8 +6,6 @@ dependencies:
   - astropy
   - h5py
   - astropy-healpix
-  - novas
-  - novas_de405
   - numpy
   - python-casacore
   - pyyaml
