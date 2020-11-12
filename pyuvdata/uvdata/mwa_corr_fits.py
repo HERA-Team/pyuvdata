@@ -756,7 +756,6 @@ class MWACorrFITS(UVData):
             # to be consistent with the uvw vector direction, all the data must
             # be conjugated
             self.data_array = np.conj(self.data_array)
-
         # wait for LSTs if set in background
         if proc is not None:
             proc.join()
@@ -766,7 +765,6 @@ class MWACorrFITS(UVData):
             # reorder pols calls check so must come after
             # lst thread is re-joined.
             self.reorder_pols()
-
         # phasing
         if phase_to_pointing_center:
             self.phase(ra_rad, dec_rad)

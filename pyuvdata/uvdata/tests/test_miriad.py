@@ -117,11 +117,6 @@ def test_read_write_read_carma(tmp_path):
     carma_file = os.path.join(DATA_PATH, "carma_miriad")
     testfile = os.path.join(tmp_path, "outtest_carma_miriad.uv")
 
-    # Test file is multi-source, make sure it bugs out
-    pytest.raises(
-        NotImplementedError, uv_in.read, carma_file,
-    )
-
     with uvtest.check_warnings(
         UserWarning,
         [
@@ -134,8 +129,6 @@ def test_read_write_read_carma(tmp_path):
             "earth. Antenna positions do not appear to be on the surface of the "
             "earth and will be treated as relative.",
             "Telescope SZA is not in known_telescopes.",
-            "File containts more than one source, only using data where source = NOISE",
-            "drift RA, Dec is off from lst, latitude by more than 1.0 deg",
             "The uvw_array does not match the expected values given the antenna "
             "positions.",
             "antaz in extra_keywords is a list, array or dict",
@@ -160,14 +153,7 @@ def test_read_write_read_carma(tmp_path):
             "wcorr in extra_keywords is a list, array or dict",
         ],
     ):
-        uv_in.read(carma_file, skip_extra_sources=True)
-
-    # Spoofing these values for now, since the data is from the noise source, which
-    # doesn't neccessarily have correct values
-    uv_in._set_phased()
-    uv_in.phase_center_ra = 0.0
-    uv_in.phase_center_dec = 0.0
-    uv_in.phase_center_epoch = 2000.0
+        uv_in.read(carma_file)
 
     # Extra keywords cannnot handle lists, dicts, or arrays, so drop them from the
     # dataset, so that the writer doesn't run into issues.
@@ -183,6 +169,24 @@ def test_read_write_read_carma(tmp_path):
     uv_in.write_miriad(testfile, clobber=True)
 
     uv_out.read(testfile)
+
+    # We have to do a bit of special handling for he object_dict, because (for reasons
+    # I don't fully understand) the last bit of the mantissa is different in the LAST
+    # bit for the object_lat and object_lon. \shrug
+    for object_name in uv_in.object_name:
+        assert np.isclose(
+            uv_in.object_dict[object_name]["object_lat"],
+            uv_out.object_dict[object_name]["object_lat"],
+        )
+        assert np.isclose(
+            uv_in.object_dict[object_name]["object_lon"],
+            uv_out.object_dict[object_name]["object_lon"],
+        )
+        uv_in.object_dict[object_name]["object_lat"] = 0.0
+        uv_in.object_dict[object_name]["object_lon"] = 0.0
+        uv_out.object_dict[object_name]["object_lat"] = 0.0
+        uv_out.object_dict[object_name]["object_lon"] = 0.0
+
     assert uv_in == uv_out
 
 

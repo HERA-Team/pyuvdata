@@ -1225,6 +1225,7 @@ def calc_uvw(
     use_ant_pos=True,
     uvw_array=None,
     antenna_positions=None,
+    antenna_numbers=None,
     ant_1_array=None,
     ant_2_array=None,
     old_app_ra=None,
@@ -1276,6 +1277,9 @@ def calc_uvw(
     antenna_positions : ndarray of float
         List of antenna positions relative to array center, required if not providing
         uvw_array. Shape is (Nants, 3).
+    antenna_numbers: ndarray of int
+        List of antenna numbers, that maps antenna numbers to entries in the
+        antenna_positions array.
     ant_1_array : ndarray of int
         Indexing map for matching which antennas are associated with the first antenna
         in the pair for all baselines, used for selecting the relevant (zero-index)
@@ -1304,9 +1308,9 @@ def calc_uvw(
         Set of baseline coordinates, shape (Nblts, 3).
     """
     if to_enu:
-        if lst_array is None:
+        if lst_array is None and not use_ant_pos:
             raise ValueError(
-                "Must include lst_array to calculate baselines" "in ENU coordinates!"
+                "Must include lst_array to calculate baselines in ENU coordinates!"
             )
         if telescope_lat is None:
             raise ValueError(
@@ -1324,14 +1328,22 @@ def calc_uvw(
         # Assume at this point we are dealing w/ antenna positions
         if antenna_positions is None:
             raise ValueError("Must include antenna_positions if use_ant_pos=True.")
-        if (ant_1_array is None) or (ant_2_array is None):
+        if (ant_1_array is None) or (ant_2_array is None) or (antenna_numbers is None):
             raise ValueError(
-                "Must include ant_1_array and ant_2_array if use_ant_pos=True."
+                "Must include ant_1_array, ant_2_array, and antenna_numbers "
+                "setting use_ant_pos=True."
             )
-        if lst_array is None:
-            raise ValueError("Must include lst_array if use_ant_pos=True.")
+        if lst_array is None and not to_enu:
+            raise ValueError(
+                "Must include lst_array if use_ant_pos=True and not calculating "
+                "baselines in ENU coordinates."
+            )
         if telescope_lon is None:
             raise ValueError("Must include telescope_lon if use_ant_pos=True.")
+
+        ant_dict = {ant_num: idx for idx, ant_num in enumerate(antenna_numbers)}
+        ant_1_index = np.array([ant_dict[idx] for idx in ant_1_array], dtype=np.int)
+        ant_2_index = np.array([ant_dict[idx] for idx in ant_2_array], dtype=np.int)
 
         N_ants = antenna_positions.shape[0]
         # Use the app_ra, app_dec, and lst_array arrays to figure out how many unique
@@ -1340,7 +1352,7 @@ def calc_uvw(
         # outselves a bit of work.
         if to_enu:
             # If to_enu, skip all this -- there's only one unique ha + dec combo
-            unique_mask = np.zeros(len(lst_array), dtype=np.bool)
+            unique_mask = np.zeros(len(ant_1_index), dtype=np.bool)
             unique_mask[0] = True
         else:
             unique_mask = np.append(
@@ -1373,7 +1385,7 @@ def calc_uvw(
         # N_ants here is the number of rotations needed per unique triplet of RA, Dec,
         # and GHA.
         if N_unique > (len(unique_mask) / N_ants):
-            uvw_array = antenna_positions[ant_2_array] - antenna_positions[ant_1_array]
+            uvw_array = antenna_positions[ant_2_index] - antenna_positions[ant_1_index]
             gha_array = (0.0 if to_enu else (lst_array - app_ra)) - telescope_lon
             new_coords = rotate_two_axis(
                 uvw_array, gha_array, telescope_lat if to_enu else app_dec, 2, 1,
@@ -1383,10 +1395,9 @@ def calc_uvw(
             ant_rot_vectors = rotate_two_axis(ant_vectors, unique_gha, unique_dec, 2, 1)
             unique_mask[0] = False
             unique_map = np.cumsum(unique_mask) * N_ants
-
             new_coords = (
-                ant_rot_vectors[unique_map + ant_2_array]
-                - ant_rot_vectors[unique_map + ant_1_array]
+                ant_rot_vectors[unique_map + ant_2_index]
+                - ant_rot_vectors[unique_map + ant_1_index]
             )
     else:
         if from_enu:
@@ -1431,7 +1442,7 @@ def calc_uvw(
             gha_delta_array,
             telescope_lat if to_enu else app_dec,
             2,
-            0,
+            1,
         )
     # There's one last task to do, which is to re-align the axes from projected
     # XYZ -> uvw, where X (which points towards the source) falls on the w axis,
@@ -1467,7 +1478,10 @@ def calc_app_coords(
             lon_coord,
             lat_coord,
             coord_frame,
-            coord_epoch=coord_epoch,
+            "icrs",
+            coord_epoch=coord_epoch
+            if (isinstance(coord_epoch, str) or isinstance(coord_epoch, Time))
+            else (None if coord_epoch is None else "J%f" % coord_epoch),
             time_array=time_array,
         )
         app_ra, app_dec = translate_icrs_to_app(
@@ -1589,7 +1603,7 @@ def translate_sidereal_to_icrs(
         if any inputs were, with shape (Ncoords,) or (Ntimes,), depending on inputs.
     """
     # Make sure that the inputs are sensible
-    if type(lon_coord) != type(lat_coord):
+    if isinstance(lon_coord, np.ndarray) != isinstance(lat_coord, np.ndarray):
         raise ValueError("lon_coord and lat_coord types must agree.")
     if isinstance(lon_coord, np.ndarray):
         if len(lon_coord) != len(lat_coord):
@@ -1609,13 +1623,18 @@ def translate_sidereal_to_icrs(
                     "Length of time_array must be either that of "
                     " lat_coord/lon_coord or 1!"
                 )
-
     coord_object = SkyCoord(
         (np.repeat(lon_coord, len(time_array)) if rep_crds else lon_coord) * units.rad,
-        (np.repeat(lat_coord, len(time_array)) if rep_crds else lon_coord) * units.rad,
-        frame=coord_frame,
-        equinox=coord_epoch,
-        obstime=np.repeat(time_array, len(lon_coord)) if rep_time else time_array,
+        (np.repeat(lat_coord, len(time_array)) if rep_crds else lat_coord) * units.rad,
+        frame=in_coord_frame,
+        equinox=coord_epoch
+        if (isinstance(coord_epoch, str) or isinstance(coord_epoch, Time))
+        else (None if coord_epoch is None else "J%f" % coord_epoch),
+        obstime=Time(
+            np.repeat(time_array, len(lon_coord)) if rep_time else time_array,
+            scale="utc",
+            format="jd",
+        ),
     )
 
     new_coord = coord_object.transform_to("icrs")
@@ -1701,7 +1720,7 @@ def translate_icrs_to_app(
     """
     # Check here to make sure that ra_coord and dec_coord are the same length,
     # either 1 or len(time_array)
-    if type(ra_coord) != type(dec_coord):
+    if isinstance(ra_coord, np.ndarray) != isinstance(dec_coord, np.ndarray):
         raise ValueError("ra_coord and dec_coord must be the same type!")
     if not isinstance(ra_coord, np.ndarray):
         multi_coord = False
@@ -1726,7 +1745,7 @@ def translate_icrs_to_app(
 
     # Check the optional inputs, make sure that they're sensible
     if pm_ra is not None:
-        if type(pm_ra) != type(ra_coord):
+        if isinstance(pm_ra, np.ndarray) != isinstance(ra_coord, np.ndarray):
             raise ValueError("pm_ra must be the same type as ra_coord and dec_coord!")
         if isinstance(ra_coord, np.ndarray):
             if len(pm_ra) != len(ra_coord):
@@ -1735,7 +1754,7 @@ def translate_icrs_to_app(
                 )
 
     if pm_dec is not None:
-        if type(pm_dec) != type(ra_coord):
+        if isinstance(pm_dec, np.ndarray) != isinstance(ra_coord, np.ndarray):
             raise ValueError("pm_dec must be the same type as ra_coord and dec_coord!")
         if isinstance(ra_coord, np.ndarray):
             if len(pm_dec) != len(ra_coord):
@@ -1744,7 +1763,7 @@ def translate_icrs_to_app(
                 )
 
     if parallax is not None:
-        if type(parallax) != type(ra_coord):
+        if isinstance(parallax, np.ndarray) != isinstance(ra_coord, np.ndarray):
             raise ValueError(
                 "parallax must be the same type as ra_coord and dec_coord!"
             )
@@ -1755,7 +1774,7 @@ def translate_icrs_to_app(
                 )
 
     if rad_vel is not None:
-        if type(rad_vel) != type(ra_coord):
+        if isinstance(rad_vel, np.ndarray) != isinstance(ra_coord, np.ndarray):
             raise ValueError("rad_vel must be the same type as ra_coord and dec_coord!")
         if isinstance(ra_coord, np.ndarray):
             if len(rad_vel) != len(ra_coord):
@@ -1833,7 +1852,6 @@ def translate_icrs_to_app(
             left=0.0,
             right=0.0,
         )
-
         # Define the obs location, which is needed to calculate diurnal abb term
         # and polar wobble corrections
         site_loc = novas.make_on_surface(
@@ -1867,9 +1885,9 @@ def translate_icrs_to_app(
             if multi_coord:
                 # Create a catalog entry for the source in question
                 sou_info = novas.make_cat_entry(
-                    "kartos_fav_source",  # Dummy source name
+                    "dummy_name",  # Dummy source name
                     "GKK",  # Catalog ID, fixed for now
-                    0,  # Star ID number, fixed for now
+                    156,  # Star ID number, fixed for now
                     ra_coord[idx] * (12.0 / np.pi),  # RA in hours
                     dec_coord[idx],  # Dec in deg
                     pm_ra[idx] if (pm_ra is not None) else 0.0,  # Proper motion RA
@@ -1879,9 +1897,9 @@ def translate_icrs_to_app(
                 )
             elif idx == 0:
                 sou_info = novas.make_cat_entry(
-                    "kartos_fav_source",  # Dummy source name
+                    "dummy_name",  # Dummy source name
                     "GKK",  # Catalog ID, fixed for now
-                    0,  # Star ID number, fixed for now
+                    156,  # Star ID number, fixed for now
                     ra_coord * (12.0 / np.pi),  # RA in hours
                     dec_coord,  # Dec in deg
                     pm_ra if (pm_ra is not None) else 0.0,  # Proper motion RA
@@ -1899,7 +1917,7 @@ def translate_icrs_to_app(
                 (tt_time_array[idx] - ut1_time_array[idx]) * 86400.0,
                 sou_info,
                 site_loc,
-                0,
+                accuracy=0,
             )
 
         app_ra *= np.pi / 12.0

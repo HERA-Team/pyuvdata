@@ -179,6 +179,7 @@ def test_read_mwa_write_uvfits_meta_mod(tmp_path):
         "some coarse channel files were not submitted",
     ]
     files = [filelist[1], filelist[5]]
+    print(files)
     with uvtest.check_warnings(UserWarning, messages):
         mwa_uv.read(files, correct_cable_len=True, phase_to_pointing_center=True)
     testfile = str(tmp_path / "outtest_MWAcorr.uvfits")
@@ -298,6 +299,7 @@ def test_ppds(tmp_path):
     mwa_uv.write_uvfits(testfile, spoof_nonessential=True)
     uvfits_uv = UVData()
     uvfits_uv.read_uvfits(testfile)
+    print(uvfits_uv.phase_center_app_ra)
     assert mwa_uv == uvfits_uv
 
     del mwa_uv

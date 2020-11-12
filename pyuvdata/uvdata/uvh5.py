@@ -458,28 +458,27 @@ class UVH5(UVData):
         if "Nobjects" in header:
             self.Nobjects = int(header["Nobjects"][()])
 
-        # check for phasing information
         self.phase_type = bytes(header["phase_type"][()]).decode("utf8")
-        # Here is where we handle the source information.  If we have a multi-object
+        # Here is where we start handing object information.  If we have a multi-object
         # dataset, this information is going to be handled a bit differently, since
         # all of these entries are expected to be required arrays.
+        if self.multi_object:
+            self.object_name = [
+                bytes(name).decode("utf8") for name in header["object_name"][:]
+            ]
+            self.object_id_array = header["object_id_array"][:]
+        else:
+            self.object_name = bytes(header["object_name"][()]).decode("utf8")
+
+        # check for phasing information
         if self.phase_type == "phased":
             self.phase_center_ra = float(header["phase_center_ra"][()])
             self.phase_center_dec = float(header["phase_center_dec"][()])
             self.phase_center_epoch = float(header["phase_center_epoch"][()])
-            if self.multi_object:
-                self.object_name = [
-                    bytes(name).decode("utf8") for name in header["object_name"][:]
-                ]
-                self.object_id_array = header["object_id_array"][:]
-            else:
-                self.object_name = bytes(header["object_name"][()]).decode("utf8")
             self._set_phased()
             if "phase_center_app_ra" in header and "phase_center_app_dec" in header:
                 self.phase_center_app_ra = header["phase_center_app_ra"][:]
                 self.phase_center_app_dec = header["phase_center_app_dec"][:]
-            else:
-                pass
         elif self.phase_type == "drift":
             self._set_drift()
         else:
@@ -538,13 +537,26 @@ class UVH5(UVData):
                     longitude,
                     altitude,
                 ) = self.telescope_location_lat_lon_alt_degrees
-                lst_array = uvutils.get_lst_for_time(
-                    self.time_array, latitude, longitude, altitude
+                # Since we have two methods now of generating the LSTs, check both to
+                # validate whether or not we've got valid values (the two differ only
+                # a small amount, but larger than the nominal tolerance).
+                lst_array1 = uvutils.get_lst_for_time(
+                    self.time_array, latitude, longitude, altitude, use_astropy=False,
+                )
+                lst_array2 = uvutils.get_lst_for_time(
+                    self.time_array, latitude, longitude, altitude, use_astropy=True,
                 )
                 if not np.all(
                     np.isclose(
                         self.lst_array,
-                        lst_array,
+                        lst_array1,
+                        rtol=self._lst_array.tols[0],
+                        atol=self._lst_array.tols[1],
+                    )
+                ) and not np.all(
+                    np.isclose(
+                        self.lst_array,
+                        lst_array2,
                         rtol=self._lst_array.tols[0],
                         atol=self._lst_array.tols[1],
                     )
@@ -593,6 +605,12 @@ class UVH5(UVData):
         if proc is not None:
             # if lsts are in the background wait for them to return
             proc.join()
+
+        # Finally, backfill the apparent coords if they aren't in the original datafile
+        if self.phase_type == "phased" and (
+            (self.phase_center_app_ra is None) or (self.phase_center_app_dec is None)
+        ):
+            self._set_app_coords_helper()
 
         return
 

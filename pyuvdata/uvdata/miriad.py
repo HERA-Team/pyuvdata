@@ -780,7 +780,7 @@ class Miriad(UVData):
         if record_app and (self.phase_type == "phased"):
             self.phase_center_app_ra = app_ra_list
             self.phase_center_app_dec = app_dec_list
-
+        print(self.multi_object)
         if self.multi_object:
             # This presupposes that the data are already phased
             self.phase_center_ra = 0.0  # This isn't used for multi-obj data
@@ -792,7 +792,7 @@ class Miriad(UVData):
             # MIRIAD, AIPS, and (I think) CASA tasks assume the coordinates are given
             # in FK5 format (well, unless epoch <= 1984, in which case MIRIAD assumes
             # in semi-Orwellian fashion that you _really_ wanted FK4/Bessel-Newcomb).
-            self.phase_center_epoch = np.median(epoch_list)
+            self.phase_center_epoch = float(np.median(epoch_list))
             self.object_id_array = sou_id_list.astype(np.int)
             self.Nobjects = Nobjects
             flip_dict = {sou_dict[key]: key for key in sou_dict.keys()}

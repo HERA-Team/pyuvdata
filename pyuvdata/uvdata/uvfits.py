@@ -40,7 +40,7 @@ class UVFITS(UVData):
     ]
 
     def _get_parameter_data(
-        self, vis_hdu, run_check_acceptability, background_lsts=True
+        self, vis_hdu, run_check_acceptability, background_lsts=True, use_astropy=False,
     ):
         """
         Read just the random parameters portion of the uvfits file ("metadata").
@@ -89,7 +89,9 @@ class UVFITS(UVData):
                     )
 
         else:
-            proc = self.set_lsts_from_time_array(background=background_lsts)
+            proc = self.set_lsts_from_time_array(
+                background=background_lsts, use_astropy=use_astropy
+            )
 
         # if antenna arrays are present, use them. otherwise use baseline array
         if "ANTENNA1" in vis_hdu.data.parnames and "ANTENNA2" in vis_hdu.data.parnames:
@@ -117,6 +119,9 @@ class UVFITS(UVData):
 
         # check for multi source files
         if "SOURCE" in vis_hdu.data.parnames:
+            # Preserve the source info just in case the AIPS SU table is missing, and
+            # we need to revert things back.
+            self._set_multi_object(preserve_source_info=True)
             source = vis_hdu.data.par("SOURCE")
             if len(set(source)) > 1:
                 raise ValueError(
@@ -337,6 +342,7 @@ class UVFITS(UVData):
         check_extra=True,
         run_check_acceptability=True,
         strict_uvw_antpos_check=False,
+        use_astropy=False,
     ):
         """
         Read in header, metadata and data from a uvfits file.
@@ -649,8 +655,95 @@ class UVFITS(UVData):
 
             # Now read in the random parameter info
             self._get_parameter_data(
-                vis_hdu, run_check_acceptability, background_lsts=background_lsts
+                vis_hdu,
+                run_check_acceptability,
+                background_lsts=background_lsts,
+                use_astropy=use_astropy,
             )
+            # If we find the source attribute in the FITS random paramter list,
+            # the multi_object attribute will be set to True, and we should also
+            # expect that there must be an AIPS SU table.
+            if self.multi_object and "AIPS SU" not in hdunames.keys():
+                warnings.warn(
+                    "UVFITS file is missing AIPS SU table, which is required when "
+                    "SOURCE is one of the `random paramters` in the main binary "
+                    "table. Bypassing for now, but note that this file _may_ not "
+                    "work correctly in UVFITS-based programs (e.g., AIPS, CASA)."
+                )
+                self.multi_object = False
+                self._object_id_array.required = False
+                self._Nobjects.required = False
+                self._object_dict.required = False
+                self._object_name.form = "str"
+                self.object_name = self.object_name[0]
+                self.Nobjects = None
+                self.object_dict = None
+                self.object_id_array = None
+            elif self.multi_object:
+                su_hdu = hdu_list[hdunames["AIPS SU"]]
+
+                # We should have as many entries in the AIPS SU header as we have
+                # unique entries in the SOURCES random paramter (checked in the call
+                # to get_parameter_data above)
+                assert len(su_hdu.data) == self.Nobjects
+
+                # Set up these arrays so we can assign values to them
+                self.phase_center_app_ra = np.zeros(self.Nblts)
+                self.phase_center_app_dec = np.zeros(self.Nblts)
+
+                object_dict = {}
+                idx_dict = {}
+                self.object_name = []
+
+                # Alright, we are off to the races!
+                for idx in range(self.Nobjects):
+                    # Grab the indv source entry
+                    sou_info = su_hdu.data[idx]
+                    sou_id = sou_info["ID. NO."]
+                    sou_name = sou_info["SOURCE"]
+                    self.object_name.append(sou_name)
+                    sou_ra = sou_info["RAEPO"] * (np.pi / 180.0)
+                    sou_dec = sou_info["DECEPO"] * (np.pi / 180.0)
+                    sou_epoch = sou_info["EPOCH"]
+                    sou_frame = "fk5"
+
+                    # Okay, now that we have all the source info, we should calculate
+                    # app coords for the source, since we'll want to use those for our
+                    # baseline calculations
+                    app_ra, app_dec = uvutils.calc_app_coords(
+                        sou_ra,
+                        sou_dec,
+                        sou_frame,
+                        coord_epoch=sou_epoch,
+                        object_type="sidereal",
+                        telescope_lat=self.telescope_location_lat_lon_alt[0],
+                        telescope_lon=self.telescope_location_lat_lon_alt[1],
+                        telescope_alt=self.telescope_location_lat_lon_alt[2],
+                        time_array=self.time_array[self.object_id_array == sou_id],
+                    )
+
+                    self.phase_center_app_ra[self.object_id_array == sou_id] = app_ra
+                    self.phase_center_app_dec[self.object_id_array == sou_id] = app_dec
+
+                    idx_dict[sou_id] = idx
+                    object_dict[sou_name] = {
+                        "object_type": "sidereal",
+                        "object_lon": sou_ra,
+                        "object_lat": sou_dec,
+                        "coord_frame": sou_frame,
+                        "coord_epoch": sou_epoch,
+                    }
+                self.object_dict = object_dict
+                # Now that we've read in the sources, we need to remap object_id_array
+                # so that it's zero indexed. UVFITS is 1-indexed, although technically,
+                # the numbers _could_ be completely out of order/assigned arbitrary int
+                # values
+                self.object_id_array = np.array(
+                    [idx_dict[idx] for idx in self.object_id_array], dtype=np.int
+                )
+
+            # Calculate the apparent coordinate values
+            self._set_app_coords_helper()
 
             if not read_data:
                 # don't read in the data. This means the object is a metadata
@@ -1026,6 +1119,11 @@ class UVFITS(UVData):
         hdu.header["ALT     "] = self.telescope_location_lat_lon_alt[2]
         hdu.header["INSTRUME"] = self.instrument
         hdu.header["EPOCH   "] = float(self.phase_center_epoch)
+        # TODO: This is a keyword that should at some point get added for velocity
+        # reference stuff, although for right now pyuvdata doesn't do any sort of
+        # handling of this, so stub this out for now.
+        # hdu.header["SPECSYS "] = "TOPOCENT"
+
         if self.phase_center_frame is not None:
             hdu.header["PHSFRAME"] = self.phase_center_frame
 
@@ -1184,6 +1282,100 @@ class UVFITS(UVData):
             fq_hdu.header["EXTNAME"] = "AIPS FQ"
             fq_hdu.header["NO_IF"] = self.Nspws
             fits_tables.append(fq_hdu)
+
+        # If needed, add the SU table
+        if self.multi_object:
+            fmt_d = "%iD" % self.Nspws
+            fmt_e = "%iE" % self.Nspws
+            fmt_j = "%iJ" % self.Nspws
+
+            int_zeros = np.zeros(self.Nobjects, dtype=np.int)
+            flt_zeros = np.zeros(self.Nobjects, dtype=np.float)
+            zero_arr = np.zeros((self.Nobjects, self.Nspws))
+            sou_ids = np.arange(self.Nobjects) + 1
+            name_arr = np.array(self.object_name)
+            cal_code = ["    "] * self.Nobjects
+            # These are things we need to flip through on a source-by-source basis
+            ra_arr = np.zeros(self.Nobjects, dtype=np.float)
+            app_ra = np.zeros(self.Nobjects, dtype=np.float)
+            dec_arr = np.zeros(self.Nobjects, dtype=np.float)
+            app_dec = np.zeros(self.Nobjects, dtype=np.float)
+            epo_arr = np.zeros(self.Nobjects, dtype=np.float)
+            pm_ra = np.zeros(self.Nobjects, dtype=np.float)
+            pm_dec = np.zeros(self.Nobjects, dtype=np.float)
+            rest_freq = np.zeros((self.Nobjects, self.Nspws), dtype=np.float)
+            for idx in range(self.Nobjects):
+                object_dict = self.object_dict[self.object_name[idx]]
+                # This is a stub for something smarter in the future
+                rest_freq[idx][:] = np.mean(self.freq_array)
+                pm_ra[idx] = 0.0
+                pm_dec[idx] = 0.0
+                if object_dict["object_type"] == "sidereal":
+                    # So here's the deal -- we need all the objects to be in the same
+                    # coordinate frame, although nothing in object_dict forces objects
+                    # to share the same frame. So we want to make sure that everything
+                    # lines up with the coordinate frame listed in phase_center_frame.
+                    ra_arr[idx], dec_arr[idx] = uvutils.translate_sidereal_to_sidereal(
+                        object_dict["object_lon"],
+                        object_dict["object_lat"],
+                        object_dict["coord_frame"],
+                        "fk5",
+                        coord_epoch=object_dict["coord_epoch"]
+                        if "coord_epoch" in (object_dict.keys())
+                        else None,
+                        time_array=np.mean(self.time_array),
+                    )
+
+                    epo_arr[idx] = (
+                        object_dict["coord_epoch"]
+                        if "coord_epoch" in (object_dict.keys())
+                        else 2000.0
+                    )
+
+                    app_ra[idx] = np.mean(
+                        self.phase_center_app_ra[self.object_id_array == idx]
+                    )
+
+                    app_dec[idx] = np.mean(
+                        self.phase_center_app_dec[self.object_id_array == idx]
+                    )
+                ra_arr *= 180.0 / np.pi
+                dec_arr *= 180.0 / np.pi
+                app_ra *= 180.0 / np.pi
+                app_dec *= 180.0 / np.pi
+
+            col_list = [
+                fits.Column(name="ID. NO.", format="1J", array=sou_ids),
+                fits.Column(name="SOURCE", format="20A", array=name_arr),
+                fits.Column(name="QUAL", format="1J", array=int_zeros),
+                fits.Column(name="CALCODE", format="4A", array=cal_code),
+                fits.Column(name="IFLUX", format=fmt_e, unit="JY", array=zero_arr),
+                fits.Column(name="QFLUX", format=fmt_e, unit="JY", array=zero_arr),
+                fits.Column(name="UFLUX", format=fmt_e, unit="JY", array=zero_arr),
+                fits.Column(name="VFLUX", format=fmt_e, unit="JY", array=zero_arr),
+                fits.Column(name="FREQOFF", format=fmt_d, unit="HZ", array=zero_arr),
+                fits.Column(name="BANDWIDTH", format="1D", unit="HZ", array=flt_zeros),
+                fits.Column(name="RAEPO", format="1D", unit="DEGREES", array=ra_arr),
+                fits.Column(name="DECEPO", format="1D", unit="DEGREES", array=dec_arr),
+                fits.Column(name="EPOCH", format="1D", unit="YEARS", array=epo_arr),
+                fits.Column(name="RAAPP", format="1D", unit="DEGREES", array=app_ra),
+                fits.Column(name="DECAPP", format="1D", unit="DEGREES", array=app_dec),
+                fits.Column(name="LSRVEL", format=fmt_d, unit="M/SEC", array=zero_arr),
+                fits.Column(name="RESTFREQ", format=fmt_d, unit="HZ", array=rest_freq),
+                fits.Column(name="PMRA", format="1D", unit="DEG/DAY", array=pm_ra),
+                fits.Column(name="PMDEC", format="1D", unit="DEG/DAY", array=pm_dec),
+            ]
+
+            su_hdu = fits.BinTableHDU.from_columns(fits.ColDefs(col_list))
+            su_hdu.header["EXTNAME"] = "AIPS SU"
+            su_hdu.header["NO_IF"] = self.Nspws
+            su_hdu.header["FREQID"] = 1
+            su_hdu.header["VELDEF"] = "RADIO"
+            # TODO: Eventually we want to not have this hardcoded, but pyuvdata at
+            # present does not carry around any velocity information. As per usual,
+            # I (Karto) am tipping my hand on what I might be working on next...
+            su_hdu.header["VELTYP"] = "LSR"
+            fits_tables.append(su_hdu)
 
         # write the file
         hdulist = fits.HDUList(hdus=fits_tables)

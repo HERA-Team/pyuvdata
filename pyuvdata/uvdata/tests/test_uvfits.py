@@ -131,7 +131,7 @@ def test_source_group_params(casa_uvfits, tmp_path):
 
 @pytest.mark.filterwarnings("ignore:The uvw_array does not match the expected values")
 @pytest.mark.filterwarnings("ignore:Telescope EVLA is not")
-def test_multisource_error(casa_uvfits, tmp_path):
+def test_missing_aips_su_table(casa_uvfits, tmp_path):
     # make a file with multiple sources to test error condition
     uv_in = casa_uvfits
     write_file = str(tmp_path / "outtest_casa.uvfits")
@@ -182,14 +182,20 @@ def test_multisource_error(casa_uvfits, tmp_path):
         hdulist.writeto(write_file2, overwrite=True)
         hdulist.close()
 
-    with pytest.raises(ValueError) as cm:
+    with uvtest.check_warnings(
+        UserWarning,
+        [
+            "UVFITS file is missing AIPS SU table, which is required when ",
+            "Telescope EVLA is not",
+            "The uvw_array does not match the expected values",
+        ],
+    ):
         uv_in.read(write_file2)
-    assert str(cm.value).startswith("This file has multiple sources")
 
 
 @pytest.mark.filterwarnings("ignore:The uvw_array does not match the expected values")
 @pytest.mark.filterwarnings("ignore:Telescope EVLA is not")
-def test_spwsupported():
+def test_multispw_supported():
     """Test reading in a uvfits file with multiple spws."""
     uvobj = UVData()
     testfile = os.path.join(DATA_PATH, "day2_TDEM0003_10s_norx_1scan.uvfits")

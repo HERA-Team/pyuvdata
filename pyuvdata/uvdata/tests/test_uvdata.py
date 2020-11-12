@@ -63,6 +63,7 @@ def uvdata_props():
         "_antenna_positions",
         "_phase_type",
         "_flex_spw",
+        "_multi_object",
     ]
 
     required_properties = [
@@ -99,6 +100,7 @@ def uvdata_props():
         "antenna_positions",
         "phase_type",
         "flex_spw",
+        "multi_object",
     ]
 
     extra_parameters = [
@@ -114,8 +116,13 @@ def uvdata_props():
         "_uvplane_reference_time",
         "_phase_center_ra",
         "_phase_center_dec",
+        "_phase_center_app_ra",
+        "_phase_center_app_dec",
         "_phase_center_epoch",
         "_phase_center_frame",
+        "_Nobjects",
+        "_object_dict",
+        "_object_id_array",
         "_eq_coeffs",
         "_eq_coeffs_convention",
         "_flex_spw_id_array",
@@ -134,8 +141,13 @@ def uvdata_props():
         "uvplane_reference_time",
         "phase_center_ra",
         "phase_center_dec",
+        "phase_center_app_ra",
+        "phase_center_app_dec",
         "phase_center_epoch",
         "phase_center_frame",
+        "Nobjects",
+        "object_dict",
+        "object_id_array",
         "eq_coeffs",
         "eq_coeffs_convention",
         "flex_spw_id_array",
@@ -191,6 +203,11 @@ def hera_uvh5_main():
     uv_object = UVData()
     testfile = os.path.join(DATA_PATH, "zen.2458661.23480.HH.uvh5")
     uv_object.read(testfile)
+
+    # During some investigating, I learned that the uvw_array here appears to be
+    # flipped. For the sake of not having to fold in this correction into a dozen
+    # or so tests, correcting it here.
+    uv_object.uvw_array *= -1.0
 
     yield uv_object
 
@@ -752,7 +769,7 @@ def test_generic_read():
         {"ra": Angle("5d").rad, "dec": Angle("30d").rad, "phase_frame": "gcrs"},
         {
             "ra": Angle("180d").rad,
-            "dec": Angle("90d"),
+            "dec": Angle("90d").rad,
             "epoch": Time("2010-01-01T00:00:00", format="isot", scale="utc"),
         },
     ],
@@ -942,28 +959,35 @@ def test_phase_unphase_hera_bad_frame(uv1_2_set_uvws):
     uv_phase, uv_raw = uv1_2_set_uvws
     # check errors when trying to phase to an unsupported frame
     with pytest.raises(ValueError) as cm:
-        uv_phase.phase(0.0, 0.0, epoch="J2000", phase_frame="cirs")
+        uv_phase.phase(0.0, 0.0, epoch="J2000", phase_frame="cirs", use_old_phase=True)
     assert str(cm.value).startswith("phase_frame can only be set to icrs or gcrs.")
 
 
+# We're using the old phase method here since these values were all derived using that
+# method, so we'll just filter out those warnings now.
+@pytest.mark.filterwarnings("ignore:The original `phase` method will be deprecated in")
 def test_phasing():
     """Use MWA files phased to 2 different places to test phasing."""
     file1 = os.path.join(DATA_PATH, "1133866760.uvfits")
     file2 = os.path.join(DATA_PATH, "1133866760_rephase.uvfits")
     uvd1 = UVData()
     uvd2 = UVData()
-    uvd1.read_uvfits(file1)
-    uvd2.read_uvfits(file2)
+    uvd1.read_uvfits(file1, use_astropy=True)
+    uvd2.read_uvfits(file2, use_astropy=True)
 
     uvd1_drift = uvd1.copy()
-    uvd1_drift.unphase_to_drift(phase_frame="gcrs")
+    uvd1_drift.unphase_to_drift(phase_frame="gcrs", use_old_phase=True)
     uvd1_drift_antpos = uvd1.copy()
-    uvd1_drift_antpos.unphase_to_drift(phase_frame="gcrs", use_ant_pos=True)
+    uvd1_drift_antpos.unphase_to_drift(
+        phase_frame="gcrs", use_ant_pos=True, use_old_phase=True,
+    )
 
     uvd2_drift = uvd2.copy()
-    uvd2_drift.unphase_to_drift(phase_frame="gcrs")
+    uvd2_drift.unphase_to_drift(phase_frame="gcrs", use_old_phase=True)
     uvd2_drift_antpos = uvd2.copy()
-    uvd2_drift_antpos.unphase_to_drift(phase_frame="gcrs", use_ant_pos=True)
+    uvd2_drift_antpos.unphase_to_drift(
+        phase_frame="gcrs", use_ant_pos=True, use_old_phase=True,
+    )
 
     # the tolerances here are empirical -- based on what was seen in the
     # external phasing test. See the phasing memo in docs/references for
@@ -978,6 +1002,7 @@ def test_phasing():
         uvd1.phase_center_epoch,
         orig_phase_frame="gcrs",
         phase_frame="gcrs",
+        use_old_phase=True,
     )
     uvd2_rephase_antpos = uvd2.copy()
     uvd2_rephase_antpos.phase(
@@ -987,6 +1012,7 @@ def test_phasing():
         orig_phase_frame="gcrs",
         phase_frame="gcrs",
         use_ant_pos=True,
+        use_old_phase=True,
     )
 
     # the tolerances here are empirical -- based on what was seen in the
@@ -1002,6 +1028,7 @@ def test_phasing():
         uvd1.phase_center_dec,
         uvd1.phase_center_epoch,
         phase_frame="gcrs",
+        use_old_phase=True,
     )
     uvd1_drift_antpos.phase(
         uvd1.phase_center_ra,
@@ -1009,6 +1036,7 @@ def test_phasing():
         uvd1.phase_center_epoch,
         phase_frame="gcrs",
         use_ant_pos=True,
+        use_old_phase=True,
     )
 
     # the tolerances here are empirical -- caused by one unphase/phase cycle.
@@ -1023,6 +1051,7 @@ def test_phasing():
         uvd2.phase_center_dec,
         uvd2.phase_center_epoch,
         phase_frame="gcrs",
+        use_old_phase=True,
     )
     uvd2_drift_antpos.phase(
         uvd2.phase_center_ra,
@@ -1030,6 +1059,7 @@ def test_phasing():
         uvd2.phase_center_epoch,
         phase_frame="gcrs",
         use_ant_pos=True,
+        use_old_phase=True,
     )
 
     # the tolerances here are empirical -- caused by one unphase/phase cycle.
@@ -3023,7 +3053,6 @@ def test_add_error_drift_and_rephase(casa_uvfits, test_func, extra_kwargs):
 )
 def test_add_this_phased_unphase_to_drift(uv_phase_time_split, test_func, extra_kwargs):
     (uv_phase_1, uv_phase_2, uv_phase, uv_raw_1, uv_raw_2, uv_raw) = uv_phase_time_split
-
     func_kwargs = {
         "unphase_to_drift": True,
         "inplace": False,
@@ -3096,7 +3125,7 @@ def test_add_this_rephase_new_phase_center(
     }
     func_kwargs.update(extra_kwargs)
     with uvtest.check_warnings(
-        UserWarning, "Phasing this UVData object to phase_center_radec"
+        UserWarning, "Phasing this UVData object to phase_center_radec",
     ):
         uv_out = getattr(uv_raw_1, test_func)(uv_raw_2, **func_kwargs)
 
@@ -4955,26 +4984,44 @@ def test_set_uvws_from_antenna_pos():
     orig_uvw_array = np.copy(uv_object.uvw_array)
 
     with pytest.raises(ValueError) as cm:
-        uv_object.set_uvws_from_antenna_positions()
+        uv_object.set_uvws_from_antenna_positions(use_old_phase=True)
     assert str(cm.value).startswith("UVW calculation requires unphased data.")
 
     with pytest.raises(ValueError) as cm:
-        with uvtest.check_warnings(UserWarning, "Data will be unphased"):
+        with uvtest.check_warnings(
+            [UserWarning, DeprecationWarning],
+            [
+                "Data will be unphased",
+                "The original `phase` method will be deprecated in a future release.",
+            ],
+        ):
             uv_object.set_uvws_from_antenna_positions(
-                allow_phasing=True, orig_phase_frame="xyz"
+                allow_phasing=True, orig_phase_frame="xyz", use_old_phase=True
             )
     assert str(cm.value).startswith("Invalid parameter orig_phase_frame.")
 
     with pytest.raises(ValueError) as cm:
-        with uvtest.check_warnings(UserWarning, "Data will be unphased"):
+        with uvtest.check_warnings(
+            [UserWarning, DeprecationWarning],
+            [
+                "Data will be unphased",
+                "The original `phase` method will be deprecated in a future release.",
+            ],
+        ):
             uv_object.set_uvws_from_antenna_positions(
-                allow_phasing=True, orig_phase_frame="gcrs", output_phase_frame="xyz"
+                allow_phasing=True,
+                orig_phase_frame="gcrs",
+                output_phase_frame="xyz",
+                use_old_phase=True,
             )
     assert str(cm.value).startswith("Invalid parameter output_phase_frame.")
 
     with uvtest.check_warnings(UserWarning, "Data will be unphased"):
         uv_object.set_uvws_from_antenna_positions(
-            allow_phasing=True, orig_phase_frame="gcrs", output_phase_frame="gcrs"
+            allow_phasing=True,
+            orig_phase_frame="gcrs",
+            output_phase_frame="gcrs",
+            use_old_phase=True,
         )
 
     max_diff = np.amax(np.absolute(np.subtract(orig_uvw_array, uv_object.uvw_array)))
@@ -6815,7 +6862,9 @@ def test_downsample_in_time_nsample_precision(hera_uvh5):
 def test_downsample_in_time_errors(hera_uvh5):
     """Test various errors and warnings are raised"""
     uv_object = hera_uvh5
-    uv_object.phase_to_time(Time(uv_object.time_array[0], format="jd"))
+    uv_object.phase_to_time(
+        Time(uv_object.time_array[0], format="jd"), use_astropy=True,
+    )
     # reorder to make sure we get the right value later
     uv_object.reorder_blts(order="baseline", minor_order="time")
 
@@ -6879,11 +6928,7 @@ def test_downsample_in_time_errors(hera_uvh5):
     times_01 = uv_object.get_times(0, 1)
     assert np.unique(np.diff(times_01)).size > 1
     with uvtest.check_warnings(
-        UserWarning,
-        [
-            "There is a gap in the times of baseline",
-            "The uvw_array does not match the expected values",
-        ],
+        UserWarning, "There is a gap in the times of baseline",
     ):
         uv_object.downsample_in_time(min_int_time=min_integration_time)
 
@@ -6927,7 +6972,7 @@ def test_downsample_in_time_int_time_mismatch_warning(hera_uvh5):
     with uvtest.check_warnings(
         UserWarning,
         match="The time difference between integrations is not the same",
-        nwarnings=11,
+        nwarnings=10,  # One of these warnings was misID'd as uwv mismatch
     ):
         uv_object.downsample_in_time(min_int_time=min_integration_time)
 
@@ -6953,7 +6998,9 @@ def test_downsample_in_time_varying_integration_time(hera_uvh5):
     within a baseline
     """
     uv_object = hera_uvh5
-    uv_object.phase_to_time(Time(uv_object.time_array[0], format="jd"))
+    uv_object.phase_to_time(
+        Time(uv_object.time_array[0], format="jd"), use_astropy=True
+    )
     # reorder to make sure we get the right value later
     uv_object.reorder_blts(order="baseline", minor_order="time")
 
@@ -6975,10 +7022,10 @@ def test_downsample_in_time_varying_integration_time(hera_uvh5):
     min_integration_time = 2 * np.amin(uv_object.integration_time)
     # check that there are no warnings about inconsistencies between
     # integration_time & time_array
-    with uvtest.check_warnings(
-        UserWarning, match="The uvw_array does not match the expected values",
-    ):
-        uv_object.downsample_in_time(min_int_time=min_integration_time)
+    with uvtest.check_warnings(None):
+        uv_object.downsample_in_time(
+            min_int_time=min_integration_time, use_astropy=True
+        )
 
     # Should have all the new integration time
     # (for this file with 20 integrations and a factor of 2 downsampling)
@@ -7011,7 +7058,9 @@ def test_downsample_in_time_varying_int_time_partial_flags(hera_uvh5):
     within a baseline and partial flagging.
     """
     uv_object = hera_uvh5
-    uv_object.phase_to_time(Time(uv_object.time_array[0], format="jd"))
+    uv_object.phase_to_time(
+        Time(uv_object.time_array[0], format="jd"), use_astropy=True,
+    )
     # reorder to make sure we get the right value later
     uv_object.reorder_blts(order="baseline", minor_order="time")
 
@@ -7039,16 +7088,18 @@ def test_downsample_in_time_varying_int_time_partial_flags(hera_uvh5):
 
     uv_object2 = uv_object.copy()
 
-    with uvtest.check_warnings(
-        UserWarning, match="The uvw_array does not match the expected values",
-    ):
-        uv_object.downsample_in_time(min_int_time=4 * initial_int_time)
     with uvtest.check_warnings(None):
-        uv_object.downsample_in_time(min_int_time=8 * initial_int_time)
-    with uvtest.check_warnings(
-        UserWarning, match="The uvw_array does not match the expected values",
-    ):
-        uv_object2.downsample_in_time(min_int_time=8 * initial_int_time)
+        uv_object.downsample_in_time(
+            min_int_time=4 * initial_int_time, use_astropy=True,
+        )
+    with uvtest.check_warnings(None):
+        uv_object.downsample_in_time(
+            min_int_time=8 * initial_int_time, use_astropy=True,
+        )
+    with uvtest.check_warnings(None):
+        uv_object2.downsample_in_time(
+            min_int_time=8 * initial_int_time, use_astropy=True,
+        )
 
     assert uv_object.history != uv_object2.history
     uv_object2.history = uv_object.history
@@ -7063,7 +7114,9 @@ def test_downsample_in_time_varying_integration_time_warning(hera_uvh5):
     within a baseline, but without adjusting the time_array so there is a mismatch.
     """
     uv_object = hera_uvh5
-    uv_object.phase_to_time(Time(uv_object.time_array[0], format="jd"))
+    uv_object.phase_to_time(
+        Time(uv_object.time_array[0], format="jd"), use_astropy=True,
+    )
     # reorder to make sure we get the right value later
     uv_object.reorder_blts(order="baseline", minor_order="time")
 
@@ -7079,13 +7132,11 @@ def test_downsample_in_time_varying_integration_time_warning(hera_uvh5):
     uv_object.integration_time[inds01[-2:]] += initial_int_time
     min_integration_time = 2 * np.amin(uv_object.integration_time)
     with uvtest.check_warnings(
-        UserWarning,
-        [
-            "The time difference between integrations is different than",
-            "The uvw_array does not match the expected values",
-        ],
+        UserWarning, "The time difference between integrations is different than",
     ):
-        uv_object.downsample_in_time(min_int_time=min_integration_time)
+        uv_object.downsample_in_time(
+            min_int_time=min_integration_time, use_astropy=True,
+        )
 
     # Should have all the new integration time
     # (for this file with 20 integrations and a factor of 2 downsampling)
@@ -7110,12 +7161,10 @@ def test_upsample_downsample_in_time(hera_uvh5):
     """Test round trip works"""
     uv_object = hera_uvh5
 
-    # set uvws from antenna positions so they'll agree later.
-    # the fact that this is required is a bit concerning, it means that
-    # our calculated uvws from the antenna positions do not match what's in the file
-    uv_object.set_uvws_from_antenna_positions()
-
-    uv_object.phase_to_time(Time(uv_object.time_array[0], format="jd"))
+    # Using astropy here (and elsewhere) to match previously calculated values
+    uv_object.phase_to_time(
+        Time(uv_object.time_array[0], format="jd"), use_astropy=True,
+    )
 
     # reorder to make sure we get the right value later
     uv_object.reorder_blts(order="baseline", minor_order="time")
@@ -7141,12 +7190,14 @@ def test_upsample_downsample_in_time(hera_uvh5):
         UserWarning, "All values in the integration_time array are already longer"
     ):
         uv_object.upsample_in_time(
-            max_integration_time - small_number, blt_order="baseline"
+            max_integration_time - small_number, blt_order="baseline", use_astropy=True,
         )
     assert uv_object.Nblts == new_Nblts
 
     uv_object.downsample_in_time(
-        min_int_time=np.amin(uv_object2.integration_time), blt_order="baseline"
+        min_int_time=np.amin(uv_object2.integration_time),
+        blt_order="baseline",
+        use_astropy=True,
     )
 
     # increase tolerance on LST if iers.conf.auto_max_age is set to None, as we
@@ -7200,13 +7251,9 @@ def test_upsample_downsample_in_time(hera_uvh5):
 def test_upsample_downsample_in_time_odd_resample(hera_uvh5):
     """Test round trip works with odd resampling"""
     uv_object = hera_uvh5
-
-    # set uvws from antenna positions so they'll agree later.
-    # the fact that this is required is a bit concerning, it means that
-    # our calculated uvws from the antenna positions do not match what's in the file
-    uv_object.set_uvws_from_antenna_positions()
-
-    uv_object.phase_to_time(Time(uv_object.time_array[0], format="jd"))
+    uv_object.phase_to_time(
+        Time(uv_object.time_array[0], format="jd"), use_astropy=True,
+    )
 
     # reorder to make sure we get the right value later
     uv_object.reorder_blts(order="baseline", minor_order="time")
@@ -7218,7 +7265,7 @@ def test_upsample_downsample_in_time_odd_resample(hera_uvh5):
     assert np.amax(uv_object.integration_time) <= max_integration_time
 
     uv_object.downsample_in_time(
-        np.amin(uv_object2.integration_time), blt_order="baseline"
+        np.amin(uv_object2.integration_time), blt_order="baseline", use_astropy=True,
     )
 
     # increase tolerance on LST if iers.conf.auto_max_age is set to None, as we
@@ -7253,12 +7300,9 @@ def test_upsample_downsample_in_time_metadata_only(hera_uvh5):
     uv_object.flag_array = None
     uv_object.nsample_array = None
 
-    # set uvws from antenna positions so they'll agree later.
-    # the fact that this is required is a bit concerning, it means that
-    # our calculated uvws from the antenna positions do not match what's in the file
-    uv_object.set_uvws_from_antenna_positions()
-
-    uv_object.phase_to_time(Time(uv_object.time_array[0], format="jd"))
+    uv_object.phase_to_time(
+        Time(uv_object.time_array[0], format="jd"), use_astropy=True,
+    )
 
     # reorder to make sure we get the right value later
     uv_object.reorder_blts(order="baseline", minor_order="time")
@@ -7269,7 +7313,7 @@ def test_upsample_downsample_in_time_metadata_only(hera_uvh5):
     assert np.amax(uv_object.integration_time) <= max_integration_time
 
     uv_object.downsample_in_time(
-        np.amin(uv_object2.integration_time), blt_order="baseline"
+        np.amin(uv_object2.integration_time), blt_order="baseline", use_astropy=True,
     )
 
     # increase tolerance on LST if iers.conf.auto_max_age is set to None, as we
@@ -8073,11 +8117,14 @@ def test_multifile_read_errors(read_func, filelist):
 def test_multifile_read_check(hera_uvh5, tmp_path):
     """Test setting skip_bad_files=True when reading in files"""
 
-    uvTrue = hera_uvh5
+    uvTrue = hera_uvh5.copy()
+
+    # Added here because the files seem to have the values flipped
+    uvTrue.uvw_array *= -1.0
     uvh5_file = os.path.join(DATA_PATH, "zen.2458661.23480.HH.uvh5")
 
     # Create a test file and remove header info to 'corrupt' it
-    testfile = str(tmp_path / "zen.2458661.23480.HH.uvh5")
+    testfile = os.path.join(tmp_path, "zen.2458661.23480.HH.uvh5")
 
     uvTrue.write_uvh5(testfile)
     with h5py.File(testfile, "r+") as h5f:
@@ -8157,15 +8204,7 @@ def test_multifile_read_check_long_list(hera_uvh5, tmp_path, err_type):
 
     # Test with corrupted file as last file in list, skip_bad_files=True
     uvTest = UVData()
-    with uvtest.check_warnings(
-        UserWarning,
-        [
-            "The uvw_array does not match the expected values given the "
-            "antenna positions."
-        ]
-        * 9
-        + ["Failed to read"],
-    ):
+    with uvtest.check_warnings(UserWarning, "Failed to read"):
         uvTest.read(fileList[0:4], skip_bad_files=True)
     uvTrue = UVData()
     uvTrue.read(fileList[0:3], skip_bad_files=True)
@@ -8185,15 +8224,7 @@ def test_multifile_read_check_long_list(hera_uvh5, tmp_path, err_type):
             h5f["Header/antenna_numbers"][3] = 85
             h5f["Header/ant_1_array"][2] = 1024
     uvTest = UVData()
-    with uvtest.check_warnings(
-        UserWarning,
-        ["Failed to read"]
-        + [
-            "The uvw_array does not match the expected values given the "
-            "antenna positions."
-        ]
-        * 9,
-    ):
+    with uvtest.check_warnings(UserWarning, "Failed to read"):
         uvTest.read(fileList[0:4], skip_bad_files=True)
     uvTrue = UVData()
     uvTrue.read(fileList[1:4], skip_bad_files=True)
@@ -8228,19 +8259,7 @@ def test_multifile_read_check_long_list(hera_uvh5, tmp_path, err_type):
             h5f["Header/antenna_numbers"][3] = 85
             h5f["Header/ant_1_array"][2] = 1024
     uvTest = UVData()
-    with uvtest.check_warnings(
-        UserWarning,
-        [
-            "The uvw_array does not match the expected values given the "
-            "antenna positions.",
-            "Failed to read",
-        ]
-        + [
-            "The uvw_array does not match the expected values given the "
-            "antenna positions.",
-        ]
-        * 8,
-    ):
+    with uvtest.check_warnings(UserWarning, "Failed to read"):
         uvTest.read(fileList[0:4], skip_bad_files=True)
     uvTrue = UVData()
     uvTrue.read([fileList[0], fileList[2], fileList[3]], skip_bad_files=True)

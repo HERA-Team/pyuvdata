@@ -174,12 +174,17 @@ class UVData(UVBase):
             tols=radian_tol,
         )
 
-        desc = "Array of first antenna indices, shape (Nblts), " "type = int, 0 indexed"
+        desc = (
+            "Array of numbers for the first antenna, which is matched to that in "
+            "the antenna_numbers attribute. Shape (Nblts), type = int."
+        )
         self._ant_1_array = uvp.UVParameter(
             "ant_1_array", description=desc, expected_type=int, form=("Nblts",)
         )
+
         desc = (
-            "Array of second antenna indices, shape (Nblts), " "type = int, 0 indexed"
+            "Array of numbers for the second antenna, which is matched to that in "
+            "the antenna_numbers attribute. Shape (Nblts), type = int."
         )
         self._ant_2_array = uvp.UVParameter(
             "ant_2_array", description=desc, expected_type=int, form=("Nblts",)
@@ -680,7 +685,6 @@ class UVData(UVBase):
         self._object_id_array.required = True
         self._Nobjects.required = True
         self._object_dict.required = True
-        self._object_name.expected_type = str
         self._object_name.form = ("Nobjects",)
 
         if preserve_source_info:
@@ -705,7 +709,7 @@ class UVData(UVBase):
                 # call this unphased.
                 self.object_name = ["unphased"]
                 # Unphased dictionary are simple -- they just require two elements
-                object_dict = {"object_type": "unphased", "object_name": "unphased"}
+                object_dict = {"object_type": "unphased"}
 
             elif self.phase_type == "unknown":
                 raise ValueError(
@@ -714,7 +718,7 @@ class UVData(UVBase):
                     "set /preserve_source_info=False."
                 )
             # Create our object dictionary
-            self.object_dict = {object_dict["object_name"]: object_dict}
+            self.object_dict = {self.object_name[0]: object_dict}
             # When convering from single-source, all baselines should be phased to
             # a single target
             self.object_id_array = np.ones(self.Nblts, dtype=np.int)
@@ -735,8 +739,8 @@ class UVData(UVBase):
         object_type,
         object_lon=None,
         object_lat=None,
-        object_frame=None,
-        object_epoch=None,
+        coord_frame=None,
+        coord_epoch=None,
         object_pm_ra=None,
         object_pm_dec=None,
         object_parallax=None,
@@ -768,15 +772,15 @@ class UVData(UVBase):
             else:
                 souDiffs += object_lat is not None
 
-            if "object_frame" in object_dict.keys():
-                souDiffs += object_dict["object_frame"] != object_frame
+            if "coord_frame" in object_dict.keys():
+                souDiffs += object_dict["coord_frame"] != coord_frame
             else:
-                souDiffs += object_frame is not None
+                souDiffs += coord_frame is not None
 
             if "object_epoch" in object_dict.keys():
-                souDiffs += object_dict["object_epoch"] != object_epoch
+                souDiffs += object_dict["object_epoch"] != coord_epoch
             else:
-                souDiffs += object_epoch is not None
+                souDiffs += coord_epoch is not None
 
             if "object_pm_ra" in object_dict.keys():
                 souDiffs += object_dict["object_pm_ra"] != object_pm_ra
@@ -812,18 +816,18 @@ class UVData(UVBase):
                 raise TypeError("object_lon cannot be None for sidereal object!")
             elif object_lat is None:
                 raise TypeError("object_lat cannot be None for sidereal object!")
-            elif object_frame is None:
-                raise TypeError("object_frame cannot be None for sidereal object!")
+            elif coord_frame is None:
+                raise TypeError("coord_frame cannot be None for sidereal object!")
 
             object_dict = {
                 "object_type": "sidereal",
                 "object_lon": object_lon,
                 "object_lat": object_lat,
-                "object_frame": object_frame,
+                "coord_frame": coord_frame,
             }
 
-            if object_epoch:
-                object_dict["object_epoch"] = object_epoch
+            if coord_epoch:
+                object_dict["coord_epoch"] = coord_epoch
             if object_pm_ra:
                 object_dict["object_pm_ra"] = object_pm_ra
             if object_pm_dec:
@@ -1162,11 +1166,11 @@ class UVData(UVBase):
         # seconds, so we need to convert.
         return np.diff(np.sort(list(set(self.time_array))))[0] * 86400
 
-    def _set_lsts_helper(self):
+    def _set_lsts_helper(self, use_astropy=False):
         latitude, longitude, altitude = self.telescope_location_lat_lon_alt_degrees
         unique_times, inverse_inds = np.unique(self.time_array, return_inverse=True)
         unique_lst_array = uvutils.get_lst_for_time(
-            unique_times, latitude, longitude, altitude
+            unique_times, latitude, longitude, altitude, use_astropy=use_astropy,
         )
         self.lst_array = unique_lst_array[inverse_inds]
         return
@@ -1185,6 +1189,10 @@ class UVData(UVBase):
             Use astropy for the calculation of apparent coordiantes (setting this to
             false will instead call NOVAS).
         """
+        if self.phase_type != "phased":
+            # Uhhh... what do you want me to do? If the dataset isn't phased, there
+            # isn't an apparent position to calculate. Time to bail, I guess...
+            return
         if self.multi_object:
             app_ra = np.zeros(self.Nblts, dtype=np.float)
             app_dec = np.zeros(self.Nblts, dtype=np.float)
@@ -1240,10 +1248,10 @@ class UVData(UVBase):
                 use_astropy=use_astropy,
                 object_type="sidereal",
             )
-        self.phase_center_ra_app = app_ra
-        self.phase_center_dec_app = app_dec
+        self.phase_center_app_ra = app_ra
+        self.phase_center_app_dec = app_dec
 
-    def set_lsts_from_time_array(self, background=False):
+    def set_lsts_from_time_array(self, background=False, use_astropy=False):
         """Set the lst_array based from the time_array.
 
         Parameters
@@ -1260,10 +1268,12 @@ class UVData(UVBase):
 
         """
         if not background:
-            self._set_lsts_helper()
+            self._set_lsts_helper(use_astropy=use_astropy)
             return
         else:
-            proc = threading.Thread(target=self._set_lsts_helper)
+            proc = threading.Thread(
+                target=self._set_lsts_helper, kwargs={"use_astropy": use_astropy},
+            )
             proc.start()
             return proc
 
@@ -2720,7 +2730,7 @@ class UVData(UVBase):
         if self.phase_center_app_ra is not None:
             self.phase_center_app_ra = self.phase_center_app_ra[index_array]
         if self.phase_center_app_dec is not None:
-            self.phase_center_app_ra = self.phase_center_app_dec[index_array]
+            self.phase_center_app_dec = self.phase_center_app_dec[index_array]
         if self.multi_object:
             self.object_id_array = self.object_id_array[index_array]
 
@@ -2801,7 +2811,7 @@ class UVData(UVBase):
         self,
         phase_frame=None,
         use_ant_pos=False,
-        use_old_phase=False,
+        use_old_phase=None,
         auto_select_phase=True,
     ):
         """
@@ -2833,7 +2843,7 @@ class UVData(UVBase):
         # Basically, the only time we need to use the 'old' phase method is if we are
         # working with a 'phased' data set, where the apparent coordinates have not
         # been calculated.
-        if auto_select_phase:
+        if auto_select_phase and (use_old_phase is None):
             use_old_phase = (self.phase_type == "phased") and (
                 self.phase_center_app_ra is None or self.phase_center_app_dec is None
             )
@@ -2876,6 +2886,7 @@ class UVData(UVBase):
                 use_ant_pos=use_ant_pos,
                 uvw_array=self.uvw_array,
                 antenna_positions=self.antenna_positions,
+                antenna_numbers=self.antenna_numbers,
                 ant_1_array=self.ant_1_array,
                 ant_2_array=self.ant_2_array,
                 old_app_ra=self.phase_center_app_ra,
@@ -2901,6 +2912,7 @@ class UVData(UVBase):
                 self.phase_center_app_ra = None
                 self.phase_center_app_dec = None
                 self._set_drift()
+            return
 
         # If you are a multi-object data set, there's no valid reason to be going
         # back to the old phase method. Time to bail!
@@ -3045,15 +3057,15 @@ class UVData(UVBase):
         phase_frame="icrs",
         object_name=None,
         object_type="sidereal",
-        pm_ra=0.0,
-        pm_dec=0.0,
-        parallax=0.0,
-        rad_vel=0.0,
+        pm_ra=None,
+        pm_dec=None,
+        parallax=None,
+        rad_vel=None,
         use_ant_pos=False,  # Can we change this to default to True?
         allow_rephase=True,
         orig_phase_frame=None,
         use_astropy=False,
-        use_old_phase=False,
+        use_old_phase=None,
         auto_select_phase=True,
         select_mask=None,
         cleanup_old_sources=True,
@@ -3118,7 +3130,7 @@ class UVData(UVBase):
         # Basically, the only time we need to use the 'old' phase method is if we are
         # working with a 'phased' data set, where the apparent coordinates have not
         # been calculated.
-        if auto_select_phase:
+        if auto_select_phase and (use_old_phase is None):
             use_old_phase = (self.phase_type == "phased") and (
                 self.phase_center_app_ra is None or self.phase_center_app_dec is None
             )
@@ -3208,6 +3220,12 @@ class UVData(UVBase):
                     # Check and see if we have any unphased objects, in which case
                     # their w-values should be zeroed out.
                     old_w_vals[self._check_for_unphased_objects] = 0.0
+            else:
+                raise ValueError(
+                    "The phasing type of the data is unknown. "
+                    'Set the phase_type to "drift" or "phased" to '
+                    "reflect the phasing status of the data"
+                )
 
             if select_mask is not None:
                 time_array = time_array[select_mask]
@@ -3235,9 +3253,8 @@ class UVData(UVBase):
                     object_parallax=parallax,
                     object_rad_vel=rad_vel,
                 )
-
             # We got the meta-data, now handle calculating the apparent coordinates
-            new_app_ra, new_app_dec = uvutils.calc_app_coors(
+            new_app_ra, new_app_dec = uvutils.calc_app_coords(
                 ra,
                 dec,
                 coord_frame=phase_frame,
@@ -3263,6 +3280,7 @@ class UVData(UVBase):
                 use_ant_pos=use_ant_pos,
                 uvw_array=uvw_array,
                 antenna_positions=self.antenna_positions,
+                antenna_numbers=self.antenna_numbers,
                 ant_1_array=ant_1_array,
                 ant_2_array=ant_2_array,
                 old_app_ra=old_app_ra,
@@ -3285,7 +3303,7 @@ class UVData(UVBase):
                 self.uvw_array[select_mask] = new_uvw
                 self.phase_center_app_ra[select_mask] = new_app_ra
                 self.phase_center_app_dec[select_mask] = new_app_dec
-                if self.mutli_source:
+                if self.multi_object:
                     self.object_id_array[select_mask] = object_id
             else:
                 self.uvw_array = new_uvw
@@ -3301,12 +3319,26 @@ class UVData(UVBase):
                 self._set_phased()
 
                 # Update the phase center properties
-                self.phase_center_ra = ra
-                self.phase_center_dec = dec
+                self.phase_center_ra = float(ra)
+                self.phase_center_dec = float(dec)
                 self.phase_center_epoch = epoch
                 self.phase_center_frame = phase_frame
                 if object_name is not None:
                     self.object_name = object_name
+                if isinstance(epoch, str):
+                    self.phase_center_epoch = float(epoch.split("J")[1])
+                elif isinstance(epoch, Time):
+                    # If this is an astropy Time objected, calculate the epoch directly
+                    self.phase_center_epoch = 2000.0 + (epoch.jd - 2451545.0) / 365.25
+                elif self.phase_center_epoch is None:
+                    # This default here as a last catch - ICRS coodinates don't really
+                    # have an epoch, per-se, so this value is meaningless with that
+                    # frame. But check wants it to be a float, so a float it shall be!
+                    self.phase_center_epoch = 2000.0
+            else:
+                self.phase_center_ra = 0.0
+                self.phase_center_dec = 0.0
+                self.phase_center_epoch = 2000.0
 
             # All done w/ the new phase method
             return
@@ -3343,7 +3375,9 @@ class UVData(UVBase):
                     atol=self._phase_center_dec.tols[1],
                 ):
                     self.unphase_to_drift(
-                        phase_frame=orig_phase_frame, use_ant_pos=use_ant_pos
+                        phase_frame=orig_phase_frame,
+                        use_ant_pos=use_ant_pos,
+                        use_old_phase=True,
                     )
             else:
                 raise ValueError(
@@ -3509,6 +3543,7 @@ class UVData(UVBase):
         use_ant_pos=False,
         allow_rephase=True,
         orig_phase_frame=None,
+        use_astropy=False,
     ):
         """
         Phase a drift scan dataset to the ra/dec of zenith at a particular time.
@@ -3564,8 +3599,8 @@ class UVData(UVBase):
         )
 
         obs_zenith_coord = zenith_coord.transform_to(phase_frame)
-        zenith_ra = obs_zenith_coord.ra
-        zenith_dec = obs_zenith_coord.dec
+        zenith_ra = obs_zenith_coord.ra.rad
+        zenith_dec = obs_zenith_coord.dec.rad
 
         self.phase(
             zenith_ra,
@@ -3575,6 +3610,7 @@ class UVData(UVBase):
             use_ant_pos=use_ant_pos,
             allow_rephase=allow_rephase,
             orig_phase_frame=orig_phase_frame,
+            use_astropy=use_astropy,
         )
 
     def _apply_w_proj(self, new_w_vals, old_w_vals, select_mask=None):
@@ -3662,8 +3698,9 @@ class UVData(UVBase):
         allow_phasing=False,
         orig_phase_frame=None,
         output_phase_frame="icrs",
-        use_old_phase=False,
+        use_old_phase=None,
         auto_select_phase=True,
+        use_astropy=False,
     ):
         """
         Calculate UVWs based on antenna_positions.
@@ -3701,11 +3738,10 @@ class UVData(UVBase):
         # Basically, the only time we need to use the 'old' phase method is if we are
         # working with a 'phased' data set, where the apparent coordinates have not
         # been calculated.
-        if auto_select_phase:
+        if auto_select_phase and use_old_phase is None:
             use_old_phase = (self.phase_type == "phased") and (
                 self.phase_center_app_ra is None or self.phase_center_app_dec is None
             )
-
         if not use_old_phase:
             telescope_location = self.telescope_location_lat_lon_alt
             new_uvw = uvutils.calc_uvw(
@@ -3714,10 +3750,12 @@ class UVData(UVBase):
                 lst_array=self.lst_array,
                 use_ant_pos=True,
                 antenna_positions=self.antenna_positions,
+                antenna_numbers=self.antenna_numbers,
                 ant_1_array=self.ant_1_array,
                 ant_2_array=self.ant_2_array,
                 telescope_lat=telescope_location[0],
                 telescope_lon=telescope_location[1],
+                from_enu=(self.phase_type != "phased"),
                 to_enu=(self.phase_type != "phased"),
             )
             if self.phase_type == "phased":
@@ -3994,6 +4032,7 @@ class UVData(UVBase):
             "_phase_center_ra",
             "_phase_center_dec",
             "_phase_center_epoch",
+            "_multi_object",
         ]
 
         # Build up history string
@@ -4181,6 +4220,17 @@ class UVData(UVBase):
             this.baseline_array = np.concatenate(
                 [this.baseline_array, other.baseline_array[bnew_inds]]
             )[blt_order]
+            if this.phase_type == "phased":
+                this.phase_center_app_ra = np.concatenate(
+                    [this.phase_center_app_ra, other.phase_center_app_ra[bnew_inds]]
+                )[blt_order]
+                this.phase_center_app_dec = np.concatenate(
+                    [this.phase_center_app_dec, other.phase_center_app_dec[bnew_inds]]
+                )[blt_order]
+            if this.multi_object:
+                this.object_id_array = np.concatenate(
+                    [this.object_id_array, other.object_id_array[bnew_inds]]
+                )[blt_order]
 
         if len(fnew_inds) > 0:
             this.freq_array = np.concatenate(
@@ -4491,7 +4541,6 @@ class UVData(UVBase):
                 run_check_acceptability=run_check_acceptability,
                 strict_uvw_antpos_check=strict_uvw_antpos_check,
             )
-
         if phase_center_radec is not None and unphase_to_drift:
             raise ValueError(
                 "phase_center_radec cannot be set if unphase_to_drift is True."
@@ -4730,6 +4779,15 @@ class UVData(UVBase):
                 )
                 this.flag_array = np.concatenate(
                     [this.flag_array] + [obj.flag_array for obj in other], axis=0,
+                )
+            if this.phase_type == "phased":
+                this.phase_center_app_ra = np.concatenate(
+                    [this.phase_center_app_ra]
+                    + [obj.phase_center_app_ra for obj in other]
+                )
+                this.phase_center_app_dec = np.concatenate(
+                    [this.phase_center_app_dec]
+                    + [obj.phase_center_app_dec for obj in other]
                 )
 
         # Check final object is self-consistent
@@ -5681,6 +5739,7 @@ class UVData(UVBase):
         temp_data,
         temp_flag,
         temp_nsample,
+        use_astropy=False,
     ):
         """
         Make a self-consistent object after up/downsampling.
@@ -5717,8 +5776,11 @@ class UVData(UVBase):
         self.Ntimes = np.unique(self.time_array).size
         self.uvw_array = np.zeros((self.Nblts, 3))
 
+        # update app source coords to new times
+        self._set_app_coords_helper(use_astropy=use_astropy)
+
         # set lst array
-        self.set_lsts_from_time_array()
+        self.set_lsts_from_time_array(use_astropy=use_astropy)
 
         # temporarily store the metadata only to calculate UVWs correctly
         uv_temp = self.copy(metadata_only=True)
@@ -5736,6 +5798,7 @@ class UVData(UVBase):
         minor_order="baseline",
         summing_correlator_mode=False,
         allow_drift=False,
+        use_astropy=False,
     ):
         """
         Resample to a shorter integration time.
@@ -5891,6 +5954,7 @@ class UVData(UVBase):
             temp_data,
             temp_flag,
             temp_nsample,
+            use_astropy=use_astropy,
         )
 
         if input_phase_type == "drift" and not allow_drift:
@@ -5921,6 +5985,7 @@ class UVData(UVBase):
         keep_ragged=True,
         summing_correlator_mode=False,
         allow_drift=False,
+        use_astropy=False,
     ):
         """
         Average to a longer integration time.
@@ -6277,6 +6342,7 @@ class UVData(UVBase):
             temp_data,
             temp_flag,
             temp_nsample,
+            use_astropy=use_astropy,
         )
 
         if input_phase_type == "drift" and not allow_drift:
@@ -6314,6 +6380,7 @@ class UVData(UVBase):
         keep_ragged=True,
         summing_correlator_mode=False,
         allow_drift=False,
+        use_astropy=False,
     ):
         """
         Intelligently upsample or downsample a UVData object to the target time.
@@ -6382,6 +6449,7 @@ class UVData(UVBase):
                 keep_ragged=keep_ragged,
                 summing_correlator_mode=summing_correlator_mode,
                 allow_drift=allow_drift,
+                use_astropy=use_astropy,
             )
         if upsample:
             self.upsample_in_time(
@@ -6390,6 +6458,7 @@ class UVData(UVBase):
                 minor_order=minor_order,
                 summing_correlator_mode=summing_correlator_mode,
                 allow_drift=allow_drift,
+                use_astropy=use_astropy,
             )
 
         return
@@ -7490,6 +7559,7 @@ class UVData(UVBase):
         check_extra=True,
         run_check_acceptability=True,
         strict_uvw_antpos_check=False,
+        use_astropy=False,
     ):
         """
         Read in header, metadata and data from a single uvfits file.
@@ -7625,6 +7695,7 @@ class UVData(UVBase):
             check_extra=check_extra,
             run_check_acceptability=run_check_acceptability,
             strict_uvw_antpos_check=strict_uvw_antpos_check,
+            use_astropy=use_astropy,
         )
         self._convert_from_filetype(uvfits_obj)
         del uvfits_obj
@@ -7853,6 +7924,7 @@ class UVData(UVBase):
         isb=None,
         corrchunk=None,
         pseudo_cont=False,
+        use_astropy=False,
     ):
         """
         Read a generic file into a UVData object.
@@ -8438,6 +8510,7 @@ class UVData(UVBase):
                     check_extra=check_extra,
                     run_check_acceptability=run_check_acceptability,
                     strict_uvw_antpos_check=strict_uvw_antpos_check,
+                    use_astropy=use_astropy,
                 )
 
             elif file_type == "mir":

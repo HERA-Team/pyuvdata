@@ -73,6 +73,8 @@ class Mir(UVData):
         isource_full_list = np.unique(mir_data.in_read["isource"]).tolist()
         if isource is None:
             isource = isource_full_list.copy()
+        elif not isinstance(isource, list):
+            isource = [isource]
 
         # Grab the list of sources we want to select on
         isource_dict = {key: key in isource for key in isource_full_list}
@@ -227,8 +229,8 @@ class Mir(UVData):
         self.Npols = 1  # todo: We will need to go back and expand this.
         self.Nspws = len(corrchunk)
         self.Ntimes = len(mir_data.in_data)
-        self.ant_1_array = mir_data.bl_data["iant1"][sb_screen] - 1
-        self.ant_2_array = mir_data.bl_data["iant2"][sb_screen] - 1
+        self.ant_1_array = mir_data.bl_data["iant1"][sb_screen]
+        self.ant_2_array = mir_data.bl_data["iant2"][sb_screen]
         self.antenna_names = [
             "Ant 1",
             "Ant 2",
@@ -239,7 +241,7 @@ class Mir(UVData):
             "Ant 7",
             "Ant 8",
         ]
-        self.antenna_numbers = np.arange(8)
+        self.antenna_numbers = np.arange(1, 9)
 
         # Prepare the XYZ coordinates of the antenna positions.
         antXYZ = np.zeros([self.Nants_telescope, 3])
@@ -313,10 +315,9 @@ class Mir(UVData):
             coord_epoch = np.mean(mir_data.in_data["epoch"][source_mask])
             object_dict[object_name] = {
                 "object_type": "sidereal",
-                "object_name": object_name,
-                "object_ra": object_ra,
-                "object_dec": object_dec,
-                "coord_frame": "icrs",  # default for SMA datasets (verify)
+                "object_lon": object_ra,
+                "object_lat": object_dec,
+                "coord_frame": "fk5",  # default for SMA datasets (verify)
                 "coord_epoch": coord_epoch,
             }
 

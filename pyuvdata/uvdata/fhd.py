@@ -620,7 +620,7 @@ class FHD(UVData):
         self.phase_center_dec_degrees = np.float(obs["OBSDEC"][0])
 
         self.phase_center_epoch = astrometry["EQUINOX"][0]
-
+        self._set_app_coords_helper()
         # Note that FHD antenna arrays are 1-indexed so we subtract 1
         # to get 0-indexed arrays
         self.ant_1_array = bl_info["TILE_A"][0] - 1
