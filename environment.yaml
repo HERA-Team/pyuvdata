@@ -6,6 +6,8 @@ dependencies:
   - astropy
   - astropy-healpix
   - h5py
+  - novas
+  - novas_de405
   - numpy>=1.18
   - pre-commit
   - pypandoc
