@@ -81,6 +81,22 @@ def test_read_mir_write_uvfits(uv_in_uvfits):
     assert 0 == uvfits_uv.history.find(
         mir_uv.history + "  Read/written with pyuvdata version:"
     )
+    mir_uv.history = uvfits_uv.history
+
+    # We have to do a bit of special handling for he object_dict, because _very_ small
+    # errors (like last bit in the mantissa) creep in when passing through the util
+    # function translate_sidereal_to_sidereal (for multi-obj datasets). Verify the
+    # two match up in terms of their coordinates
+    for object_name in mir_uv.object_name:
+        assert np.isclose(
+            mir_uv.object_dict[object_name]["object_lat"],
+            uvfits_uv.object_dict[object_name]["object_lat"],
+        )
+        assert np.isclose(
+            mir_uv.object_dict[object_name]["object_lon"],
+            uvfits_uv.object_dict[object_name]["object_lon"],
+        )
+    uvfits_uv.object_dict = mir_uv.object_dict
 
     # There's a minor difference between what SMA calculates online for app coords
     # and what NOVAS calculates, to the tune of ~10 mas. Check those values here,
@@ -94,8 +110,8 @@ def test_read_mir_write_uvfits(uv_in_uvfits):
     )
 
     mir_uv._set_app_coords_helper()
+    uvfits_uv._set_app_coords_helper()
 
-    mir_uv.history = uvfits_uv.history
     assert mir_uv == uvfits_uv
 
 
