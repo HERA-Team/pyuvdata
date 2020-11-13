@@ -780,7 +780,6 @@ class Miriad(UVData):
         if record_app and (self.phase_type == "phased"):
             self.phase_center_app_ra = app_ra_list
             self.phase_center_app_dec = app_dec_list
-        print(self.multi_object)
         if self.multi_object:
             # This presupposes that the data are already phased
             self.phase_center_ra = 0.0  # This isn't used for multi-obj data
