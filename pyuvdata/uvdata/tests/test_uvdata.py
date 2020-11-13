@@ -5016,12 +5016,24 @@ def test_set_uvws_from_antenna_pos():
             )
     assert str(cm.value).startswith("Invalid parameter output_phase_frame.")
 
-    with uvtest.check_warnings(UserWarning, "Data will be unphased"):
+    with uvtest.check_warnings(
+        [UserWarning, DeprecationWarning, DeprecationWarning],
+        [
+            "Data will be unphased",
+            "The original `phase` method will be deprecated in",
+            "The original `phase` method will be deprecated in",
+        ],
+    ):
         uv_object.set_uvws_from_antenna_positions(
             allow_phasing=True,
             orig_phase_frame="gcrs",
             output_phase_frame="gcrs",
             use_old_phase=True,
+        )
+
+    with uvtest.check_warnings(None):
+        uv_object.set_uvws_from_antenna_positions(
+            allow_phasing=True, orig_phase_frame="gcrs", output_phase_frame="gcrs",
         )
 
     max_diff = np.amax(np.absolute(np.subtract(orig_uvw_array, uv_object.uvw_array)))

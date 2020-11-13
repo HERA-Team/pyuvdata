@@ -444,8 +444,6 @@ class MS(UVData):
 
         # order polarizations
         self.reorder_pols(order=pol_order)
-        print("hi there")
-        print(use_astropy)
         if run_check:
             self.check(
                 check_extra=check_extra,

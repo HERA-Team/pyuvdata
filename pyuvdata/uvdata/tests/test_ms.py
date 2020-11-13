@@ -37,7 +37,21 @@ def test_cotter_ms():
 
     # check that a select on read works
     uvobj2 = UVData()
-    with uvtest.check_warnings(UserWarning, "Warning: select on read keyword set"):
+    # TODO: This is here as a catch for now - the way that MS dataset records baseline
+    # vectors appear to be rotated in the UV plane, such that V is oriented along the
+    # great circle of RA in the J2000/ICRF/requested reference frame (rather than the
+    # apparent coordinate plane). We should decide whether this is how pyuvdata coords
+    # should be oriented, or if they should be rotated so that "north" is towards the
+    # apparent celestial pole
+    with uvtest.check_warnings(
+        UserWarning,
+        [
+            "Warning: select on read keyword set",
+            "The uvw_array does not match the expected values",
+            "The uvw_array does not match the expected values",
+            "The uvw_array does not match the expected values",
+        ],
+    ):
         uvobj2.read(testfile, freq_chans=np.arange(2), use_astropy=False)
     uvobj.select(freq_chans=np.arange(2))
     assert uvobj == uvobj2
