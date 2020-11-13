@@ -3741,7 +3741,6 @@ class UVData(UVBase):
         # Basically, the only time we need to use the 'old' phase method is if we are
         # working with a 'phased' data set, where the apparent coordinates have not
         # been calculated.
-        print(use_astropy)
         if auto_select_phase and use_old_phase is None:
             use_old_phase = (self.phase_type == "phased") and (
                 self.phase_center_app_ra is None or self.phase_center_app_dec is None
@@ -3806,7 +3805,9 @@ class UVData(UVBase):
                 phase_center_ra = self.phase_center_ra
                 phase_center_dec = self.phase_center_dec
                 phase_center_epoch = self.phase_center_epoch
-                self.unphase_to_drift(phase_frame=orig_phase_frame)
+                self.unphase_to_drift(
+                    phase_frame=orig_phase_frame, use_old_phase=use_old_phase,
+                )
             else:
                 raise ValueError(
                     "UVW calculation requires unphased data. "
@@ -3842,13 +3843,14 @@ class UVData(UVBase):
             - antenna_locs_ENU[ant_sort][ant1_index, :]
         )
         self.uvw_array = _uvw_array[reverse_inds]
-
         if phase_type == "phased":
             self.phase(
                 phase_center_ra,
                 phase_center_dec,
                 phase_center_epoch,
                 phase_frame=output_phase_frame,
+                use_old_phase=use_old_phase,
+                use_astropy=use_astropy,
             )
 
     def __add__(

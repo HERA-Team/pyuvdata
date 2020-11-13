@@ -443,7 +443,7 @@ class MS(UVData):
         self._set_app_coords_helper(use_astropy=use_astropy)
 
         # order polarizations
-        self.reorder_pols(order=pol_order, use_astropy=use_astropy)
+        self.reorder_pols(order=pol_order)
         print("hi there")
         print(use_astropy)
         if run_check:
