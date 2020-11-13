@@ -5033,10 +5033,7 @@ def test_set_uvws_from_antenna_pos():
 
     with uvtest.check_warnings(None):
         uv_object.set_uvws_from_antenna_positions(
-            allow_phasing=True,
-            orig_phase_frame="gcrs",
-            output_phase_frame="gcrs",
-            use_old_phase=True,
+            allow_phasing=True, orig_phase_frame="gcrs", output_phase_frame="gcrs",
         )
 
     max_diff = np.amax(np.absolute(np.subtract(orig_uvw_array, uv_object.uvw_array)))
