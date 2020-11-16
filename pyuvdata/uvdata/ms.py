@@ -442,9 +442,6 @@ class MS(UVData):
         # Fill in the apparent coordinates here
         self._set_app_coords_helper(use_novas=use_novas)
 
-        # Fill in the apparent coordinates here
-        self._set_app_coords_helper()
-
         # order polarizations
         self.reorder_pols(order=pol_order)
         if run_check:
