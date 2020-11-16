@@ -110,12 +110,14 @@ extensions = [corr_fits_extension, utils_extension]
 if not is_platform_windows():
     extensions.append(miriad_extension)
 
+novas_reqs = ["novas", "novas_de405"]
 casa_reqs = ["python-casacore"]
 healpix_reqs = ["astropy_healpix"]
 cst_reqs = ["pyyaml"]
 test_reqs = (
     casa_reqs
     + healpix_reqs
+    + novas_reqs
     + cst_reqs
     + [
         "pytest>=6.2",
@@ -147,17 +149,16 @@ setup_args = {
     "install_requires": [
         "numpy>=1.18",
         "scipy",
-        "novas",
-        "novas_de405",
         "astropy>=3.2.3",
         "h5py",
         "setuptools_scm",
     ],
     "extras_require": {
         "casa": casa_reqs,
+        "novas": novas_reqs,
         "healpix": healpix_reqs,
         "cst": cst_reqs,
-        "all": casa_reqs + healpix_reqs + cst_reqs,
+        "all": casa_reqs + healpix_reqs + cst_reqs + novas_reqs,
         "test": test_reqs,
         "doc": doc_reqs,
         "dev": test_reqs + doc_reqs,
