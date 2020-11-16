@@ -4350,7 +4350,6 @@ class UVData(UVBase):
         if n_axes > 0:
             history_update_string += " axis using pyuvdata."
             this.history += history_update_string
-        print(history_update_string)
         this.history = uvutils._combine_histories(this.history, other.history)
 
         # Check final object is self-consistent
