@@ -5749,14 +5749,6 @@ def test_overlapping_data_add(casa_uvfits, tmp_path):
     uvfull.history = uv.history  # make histories match
     assert uvfull == uv
 
-    # clean up after ourselves
-    os.remove(uv1_out)
-    os.remove(uv2_out)
-    os.remove(uv3_out)
-    os.remove(uv4_out)
-
-    return
-
 
 @pytest.mark.filterwarnings("ignore:The uvw_array does not match the expected values")
 def test_lsts_from_time_with_only_unique(paper_uvh5):
