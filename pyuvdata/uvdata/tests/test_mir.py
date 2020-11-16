@@ -99,14 +99,14 @@ def test_read_mir_write_uvfits(uv_in_uvfits):
     uvfits_uv.object_dict = mir_uv.object_dict
 
     # There's a minor difference between what SMA calculates online for app coords
-    # and what NOVAS calculates, to the tune of ~10 mas. Check those values here,
+    # and what pyuvdata calculates, to the tune of ~1 arcsec. Check those values here,
     # then set them equal to one another.
     assert np.all(
-        np.abs(mir_uv.phase_center_app_ra - uvfits_uv.phase_center_app_ra) < 1e-6
+        np.abs(mir_uv.phase_center_app_ra - uvfits_uv.phase_center_app_ra) < 1e-5
     )
 
     assert np.all(
-        np.abs(mir_uv.phase_center_app_dec - uvfits_uv.phase_center_app_dec) < 1e-6
+        np.abs(mir_uv.phase_center_app_dec - uvfits_uv.phase_center_app_dec) < 1e-5
     )
 
     mir_uv._set_app_coords_helper()

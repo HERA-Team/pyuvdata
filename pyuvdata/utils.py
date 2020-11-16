@@ -15,8 +15,6 @@ from astropy.coordinates import Angle
 from astropy.utils import iers
 from astropy.coordinates import SkyCoord, EarthLocation, AltAz
 import astropy.units as units
-from novas import compat as novas
-from novas.compat import eph_manager
 from . import _utils
 
 
@@ -1465,7 +1463,7 @@ def calc_app_coords(
     telescope_lat=None,
     telescope_lon=None,
     telescope_alt=None,
-    use_astropy=False,
+    use_novas=False,
 ):
     """
     Calculate apparent coordinates for several different object types.
@@ -1495,7 +1493,7 @@ def calc_app_coords(
             pm_dec=pm_dec,
             rad_vel=rad_vel,
             parallax=parallax,
-            use_astropy=use_astropy,
+            use_novas=use_novas,
         )
     elif object_type == "driftscan":
         app_ra, app_dec = translate_driftscan_to_app(
@@ -1652,7 +1650,7 @@ def translate_icrs_to_app(
     pm_dec=None,
     rad_vel=None,
     parallax=None,
-    use_astropy=False,
+    use_novas=False,
 ):
     """
     Translate a set of coordinates in ICRS to topocentric/apparent coordinates.
@@ -1687,29 +1685,29 @@ def translate_icrs_to_app(
         Proper motion in RA of the source, expressed in units of milliarcsec / year.
         Proper motion values are applied relative to the J2000 (i.e., RA/Dec ICRS
         values should be set to their expected values when the epoch is 2000.0).
-        Only used if use_astropy=False, and is optional. Can either be a single float
+        Only used if use_novas=True, and is optional. Can either be a single float
         or array of shape (Ntimes,), although this must be consistent with other
         parameters (namely ra_coord and dec_coord).
     pm_dec : float or ndarray of float
         Proper motion in Dec of the source, expressed in units of milliarcsec / year.
         Proper motion values are applied relative to the J2000 (i.e., RA/Dec ICRS
         values should be set to their expected values when the epoch is 2000.0).
-        Only used if use_astropy=False, and is optional. Can either be a single float
+        Only used if use_novas=True, and is optional. Can either be a single float
         or array of shape (Ntimes,), although this must be consistent with other
         parameters (namely ra_coord and dec_coord).
     rad_vel : float or ndarray of float
         Radial velocity of the source, expressed in units of km / sec. Only used if
-        use_astropy=False, and is optional. Can either be a single float or array of
+        use_novas=True, and is optional. Can either be a single float or array of
         shape (Ntimes,), although this must be consistent with other parameters
         (namely ra_coord and dec_coord).
     parallax : float or ndarray of float
         Parallax of the source, expressed in milliarcseconds. Only used if
-        use_astropy=False, and is optional. Can either be a single float or array of
+        use_novas=True, and is optional. Can either be a single float or array of
         shape (Ntimes,), although this must be consistent with other parameters
         (namely ra_coord and dec_coord).
-    use_astropy : boolean
-        Use astropy in order to calculate the apparent coordinates. Default is false,
-        which instead uses NOVAS for deriving coordinate positions.
+    use_novas : boolean
+        Use novas in order to calculate the apparent coordinates. Default is false,
+        which instead uses astropy for deriving coordinate positions.
 
     Returns
     -------
@@ -1782,7 +1780,7 @@ def translate_icrs_to_app(
                     "rad_vel must be the same length as ra_coord and dec_coord!"
                 )
 
-    if use_astropy:
+    if not use_novas:
         # Note that this implementation isn't perfect, but it does appear to agree
         # to better than 1 arcsec w/ what NOVAS produces. Errors are of similar size
         # to polar wobble and diurnal abberation terms.
@@ -1830,6 +1828,10 @@ def translate_icrs_to_app(
         )
         app_dec = np.arcsin(xyz_prime[:, 2])
     else:
+        # Import the NOVAS library only if it's needed/available.
+        from novas import compat as novas
+        from novas.compat import eph_manager
+
         # Call is needed to load high-precision ephem data in NOVAS
         jd_start, jd_end, number = eph_manager.ephem_open()
 
@@ -1926,7 +1928,7 @@ def translate_icrs_to_app(
     return app_ra, app_dec
 
 
-def get_lst_for_time(jd_array, latitude, longitude, altitude, use_astropy=False):
+def get_lst_for_time(jd_array, latitude, longitude, altitude, use_novas=False):
     """
     Get the lsts for a set of jd times at an earth location.
 
@@ -1940,9 +1942,9 @@ def get_lst_for_time(jd_array, latitude, longitude, altitude, use_astropy=False)
         Longitude of location to get lst for in degrees.
     altitude : float
         Altitude of location to get lst for in meters.
-    use_astropy: boolean
-        Use astropy for the calculation of L(A)ST. Default is false, which instead
-        triggers the use of NOVAS for the calculations.
+    use_novas: boolean
+        Use NOVAS for the calculation of L(A)ST. Default is false, which instead
+        triggers the use of astropy for the calculations.
 
     Returns
     -------
@@ -1968,9 +1970,15 @@ def get_lst_for_time(jd_array, latitude, longitude, altitude, use_astropy=False)
                 "extrapolated value"
             )
             times.delta_ut1_utc = delta
-    if use_astropy:
+    if not use_novas:
         lst_array = times.sidereal_time("apparent").radian[reverse_inds]
     else:
+        # Import the NOVAS library only if it's needed/available.
+        from novas import compat as novas
+        from novas.compat import eph_manager
+
+        jd_start, jd_end, number = eph_manager.ephem_open()
+
         tt_time_array = times.tt.value
         ut1_time_array = times.ut1.value
         polar_motion_data = iers.earth_orientation_table.get()

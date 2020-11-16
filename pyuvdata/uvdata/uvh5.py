@@ -537,26 +537,15 @@ class UVH5(UVData):
                     longitude,
                     altitude,
                 ) = self.telescope_location_lat_lon_alt_degrees
-                # Since we have two methods now of generating the LSTs, check both to
-                # validate whether or not we've got valid values (the two differ only
-                # a small amount, but larger than the nominal tolerance).
-                lst_array1 = uvutils.get_lst_for_time(
-                    self.time_array, latitude, longitude, altitude, use_astropy=False,
+
+                lst_array = uvutils.get_lst_for_time(
+                    self.time_array, latitude, longitude, altitude,
                 )
-                lst_array2 = uvutils.get_lst_for_time(
-                    self.time_array, latitude, longitude, altitude, use_astropy=True,
-                )
+
                 if not np.all(
                     np.isclose(
                         self.lst_array,
-                        lst_array1,
-                        rtol=self._lst_array.tols[0],
-                        atol=self._lst_array.tols[1],
-                    )
-                ) and not np.all(
-                    np.isclose(
-                        self.lst_array,
-                        lst_array2,
+                        lst_array,
                         rtol=self._lst_array.tols[0],
                         atol=self._lst_array.tols[1],
                     )

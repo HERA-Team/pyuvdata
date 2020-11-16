@@ -1166,16 +1166,16 @@ class UVData(UVBase):
         # seconds, so we need to convert.
         return np.diff(np.sort(list(set(self.time_array))))[0] * 86400
 
-    def _set_lsts_helper(self, use_astropy=False):
+    def _set_lsts_helper(self, use_novas=False):
         latitude, longitude, altitude = self.telescope_location_lat_lon_alt_degrees
         unique_times, inverse_inds = np.unique(self.time_array, return_inverse=True)
         unique_lst_array = uvutils.get_lst_for_time(
-            unique_times, latitude, longitude, altitude, use_astropy=use_astropy,
+            unique_times, latitude, longitude, altitude, use_novas=use_novas,
         )
         self.lst_array = unique_lst_array[inverse_inds]
         return
 
-    def _set_app_coords_helper(self, use_astropy=False):
+    def _set_app_coords_helper(self, use_novas=False):
         """
         Set values for the apparent coordinate arrays.
 
@@ -1185,9 +1185,9 @@ class UVData(UVBase):
 
         Parameters
         ----------
-        use_astropy : bool, False
-            Use astropy for the calculation of apparent coordiantes (setting this to
-            false will instead call NOVAS).
+        use_novas : bool, False
+            Use NOVAS for the calculation of apparent coordiantes (setting this to
+            false will instead call astropy).
         """
         if self.phase_type != "phased":
             # Uhhh... what do you want me to do? If the dataset isn't phased, there
@@ -1230,7 +1230,7 @@ class UVData(UVBase):
                     telescope_lon=self.telescope_location_lat_lon_alt[1],
                     telescope_alt=self.telescope_location_lat_lon_alt[2],
                     object_type=object_type,
-                    use_astropy=use_astropy,
+                    use_novas=use_novas,
                 )
         else:
             # So this is actually the easier of the two cases -- just use the object
@@ -1245,13 +1245,13 @@ class UVData(UVBase):
                 telescope_lat=self.telescope_location_lat_lon_alt[0],
                 telescope_lon=self.telescope_location_lat_lon_alt[1],
                 telescope_alt=self.telescope_location_lat_lon_alt[2],
-                use_astropy=use_astropy,
+                use_novas=use_novas,
                 object_type="sidereal",
             )
         self.phase_center_app_ra = app_ra
         self.phase_center_app_dec = app_dec
 
-    def set_lsts_from_time_array(self, background=False, use_astropy=False):
+    def set_lsts_from_time_array(self, background=False, use_novas=False):
         """Set the lst_array based from the time_array.
 
         Parameters
@@ -1268,11 +1268,11 @@ class UVData(UVBase):
 
         """
         if not background:
-            self._set_lsts_helper(use_astropy=use_astropy)
+            self._set_lsts_helper(use_novas=use_novas)
             return
         else:
             proc = threading.Thread(
-                target=self._set_lsts_helper, kwargs={"use_astropy": use_astropy},
+                target=self._set_lsts_helper, kwargs={"use_novas": use_novas},
             )
             proc.start()
             return proc
@@ -1409,7 +1409,7 @@ class UVData(UVBase):
         run_check_acceptability=True,
         check_freq_spacing=False,
         strict_uvw_antpos_check=False,
-        use_astropy=False,
+        use_novas=False,
     ):
         """
         Add some extra checks on top of checks on UVBase class.
@@ -1515,7 +1515,7 @@ class UVData(UVBase):
                 temp_obj.set_uvws_from_antenna_positions(
                     allow_phasing=True,
                     output_phase_frame=output_phase_frame,
-                    use_astropy=use_astropy,
+                    use_novas=use_novas,
                 )
 
             if not np.allclose(temp_obj.uvw_array, self.uvw_array, atol=1):
@@ -3067,7 +3067,7 @@ class UVData(UVBase):
         use_ant_pos=False,  # Can we change this to default to True?
         allow_rephase=True,
         orig_phase_frame=None,
-        use_astropy=False,
+        use_novas=False,
         use_old_phase=None,
         auto_select_phase=True,
         select_mask=None,
@@ -3109,10 +3109,10 @@ class UVData(UVBase):
             the phase_center_ra/dec of the object does not match `ra` and `dec`.
             Defaults to using the 'phase_center_frame' attribute or 'icrs' if
             that attribute is None.
-        use_astropy : bool
-            If True, use the astropy module for handling calculation of source
+        use_novas : bool
+            If True, use the python-novas module for handling calculation of source
             position coordinates. Default is False, which instead invokes the
-            python-novas library.
+            astropy library.
         use_old_phase : bool
             If True, use the "old" method for calculating baseline uvw-coordinates,
             which involved using astropy to move antenna positions (in ITRF) into
@@ -3272,7 +3272,7 @@ class UVData(UVBase):
                 telescope_lat=telescope_location[0],
                 telescope_lon=telescope_location[1],
                 telescope_alt=telescope_location[2],
-                use_astropy=use_astropy,
+                use_novas=use_novas,
             )
 
             # Now its time to do some rotations and calculate the new coordinates
@@ -3546,7 +3546,7 @@ class UVData(UVBase):
         use_ant_pos=False,
         allow_rephase=True,
         orig_phase_frame=None,
-        use_astropy=False,
+        use_novas=False,
     ):
         """
         Phase a drift scan dataset to the ra/dec of zenith at a particular time.
@@ -3613,7 +3613,7 @@ class UVData(UVBase):
             use_ant_pos=use_ant_pos,
             allow_rephase=allow_rephase,
             orig_phase_frame=orig_phase_frame,
-            use_astropy=use_astropy,
+            use_novas=use_novas,
         )
 
     def _apply_w_proj(self, new_w_vals, old_w_vals, select_mask=None):
@@ -3703,7 +3703,7 @@ class UVData(UVBase):
         output_phase_frame="icrs",
         use_old_phase=None,
         auto_select_phase=True,
-        use_astropy=False,
+        use_novas=False,
     ):
         """
         Calculate UVWs based on antenna_positions.
@@ -3850,7 +3850,7 @@ class UVData(UVBase):
                 phase_center_epoch,
                 phase_frame=output_phase_frame,
                 use_old_phase=use_old_phase,
-                use_astropy=use_astropy,
+                use_novas=use_novas,
             )
 
     def __add__(
@@ -5745,7 +5745,7 @@ class UVData(UVBase):
         temp_data,
         temp_flag,
         temp_nsample,
-        use_astropy=False,
+        use_novas=False,
     ):
         """
         Make a self-consistent object after up/downsampling.
@@ -5783,10 +5783,10 @@ class UVData(UVBase):
         self.uvw_array = np.zeros((self.Nblts, 3))
 
         # update app source coords to new times
-        self._set_app_coords_helper(use_astropy=use_astropy)
+        self._set_app_coords_helper(use_novas=use_novas)
 
         # set lst array
-        self.set_lsts_from_time_array(use_astropy=use_astropy)
+        self.set_lsts_from_time_array(use_novas=use_novas)
 
         # temporarily store the metadata only to calculate UVWs correctly
         uv_temp = self.copy(metadata_only=True)
@@ -5804,7 +5804,7 @@ class UVData(UVBase):
         minor_order="baseline",
         summing_correlator_mode=False,
         allow_drift=False,
-        use_astropy=False,
+        use_novas=False,
     ):
         """
         Resample to a shorter integration time.
@@ -5960,7 +5960,7 @@ class UVData(UVBase):
             temp_data,
             temp_flag,
             temp_nsample,
-            use_astropy=use_astropy,
+            use_novas=use_novas,
         )
 
         if input_phase_type == "drift" and not allow_drift:
@@ -5991,7 +5991,7 @@ class UVData(UVBase):
         keep_ragged=True,
         summing_correlator_mode=False,
         allow_drift=False,
-        use_astropy=False,
+        use_novas=False,
     ):
         """
         Average to a longer integration time.
@@ -6348,7 +6348,7 @@ class UVData(UVBase):
             temp_data,
             temp_flag,
             temp_nsample,
-            use_astropy=use_astropy,
+            use_novas=use_novas,
         )
 
         if input_phase_type == "drift" and not allow_drift:
@@ -6386,7 +6386,7 @@ class UVData(UVBase):
         keep_ragged=True,
         summing_correlator_mode=False,
         allow_drift=False,
-        use_astropy=False,
+        use_novas=False,
     ):
         """
         Intelligently upsample or downsample a UVData object to the target time.
@@ -6455,7 +6455,7 @@ class UVData(UVBase):
                 keep_ragged=keep_ragged,
                 summing_correlator_mode=summing_correlator_mode,
                 allow_drift=allow_drift,
-                use_astropy=use_astropy,
+                use_novas=use_novas,
             )
         if upsample:
             self.upsample_in_time(
@@ -6464,7 +6464,7 @@ class UVData(UVBase):
                 minor_order=minor_order,
                 summing_correlator_mode=summing_correlator_mode,
                 allow_drift=allow_drift,
-                use_astropy=use_astropy,
+                use_novas=use_novas,
             )
 
         return
@@ -7321,7 +7321,7 @@ class UVData(UVBase):
         check_extra=True,
         run_check_acceptability=True,
         strict_uvw_antpos_check=False,
-        use_astropy=False,
+        use_novas=False,
     ):
         """
         Read in data from a measurement set.
@@ -7390,7 +7390,7 @@ class UVData(UVBase):
             check_extra=check_extra,
             run_check_acceptability=run_check_acceptability,
             strict_uvw_antpos_check=strict_uvw_antpos_check,
-            use_astropy=use_astropy,
+            use_novas=use_novas,
         )
         self._convert_from_filetype(ms_obj)
         del ms_obj
@@ -7567,7 +7567,7 @@ class UVData(UVBase):
         check_extra=True,
         run_check_acceptability=True,
         strict_uvw_antpos_check=False,
-        use_astropy=False,
+        use_novas=False,
     ):
         """
         Read in header, metadata and data from a single uvfits file.
@@ -7703,7 +7703,7 @@ class UVData(UVBase):
             check_extra=check_extra,
             run_check_acceptability=run_check_acceptability,
             strict_uvw_antpos_check=strict_uvw_antpos_check,
-            use_astropy=use_astropy,
+            use_novas=use_novas,
         )
         self._convert_from_filetype(uvfits_obj)
         del uvfits_obj
@@ -7932,7 +7932,7 @@ class UVData(UVBase):
         isb=None,
         corrchunk=None,
         pseudo_cont=False,
-        use_astropy=False,
+        use_novas=False,
     ):
         """
         Read a generic file into a UVData object.
@@ -8518,7 +8518,7 @@ class UVData(UVBase):
                     check_extra=check_extra,
                     run_check_acceptability=run_check_acceptability,
                     strict_uvw_antpos_check=strict_uvw_antpos_check,
-                    use_astropy=use_astropy,
+                    use_novas=use_novas,
                 )
 
             elif file_type == "mir":
@@ -8595,7 +8595,7 @@ class UVData(UVBase):
                     check_extra=check_extra,
                     run_check_acceptability=run_check_acceptability,
                     strict_uvw_antpos_check=strict_uvw_antpos_check,
-                    use_astropy=use_astropy,
+                    use_novas=use_novas,
                 )
 
             elif file_type == "uvh5":

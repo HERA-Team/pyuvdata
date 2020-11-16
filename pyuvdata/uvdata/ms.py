@@ -142,7 +142,7 @@ class MS(UVData):
         check_extra=True,
         run_check_acceptability=True,
         strict_uvw_antpos_check=False,
-        use_astropy=False,
+        use_novas=False,
     ):
         """
         Read in a casa measurement set.
@@ -411,7 +411,7 @@ class MS(UVData):
 
         # set LST array from times and itrf
         proc = self.set_lsts_from_time_array(
-            background=background_lsts, use_astropy=use_astropy,
+            background=background_lsts, use_novas=use_novas,
         )
 
         # set the history parameter
@@ -440,7 +440,7 @@ class MS(UVData):
         if proc is not None:
             proc.join()
         # Fill in the apparent coordinates here
-        self._set_app_coords_helper(use_astropy=use_astropy)
+        self._set_app_coords_helper(use_novas=use_novas)
 
         # order polarizations
         self.reorder_pols(order=pol_order)
@@ -449,5 +449,5 @@ class MS(UVData):
                 check_extra=check_extra,
                 run_check_acceptability=run_check_acceptability,
                 strict_uvw_antpos_check=strict_uvw_antpos_check,
-                use_astropy=use_astropy,
+                use_novas=use_novas,
             )

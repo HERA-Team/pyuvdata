@@ -40,7 +40,7 @@ class UVFITS(UVData):
     ]
 
     def _get_parameter_data(
-        self, vis_hdu, run_check_acceptability, background_lsts=True, use_astropy=False,
+        self, vis_hdu, run_check_acceptability, background_lsts=True, use_novas=False,
     ):
         """
         Read just the random parameters portion of the uvfits file ("metadata").
@@ -90,7 +90,7 @@ class UVFITS(UVData):
 
         else:
             proc = self.set_lsts_from_time_array(
-                background=background_lsts, use_astropy=use_astropy
+                background=background_lsts, use_novas=use_novas,
             )
 
         # if antenna arrays are present, use them. otherwise use baseline array
@@ -342,7 +342,7 @@ class UVFITS(UVData):
         check_extra=True,
         run_check_acceptability=True,
         strict_uvw_antpos_check=False,
-        use_astropy=False,
+        use_novas=False,
     ):
         """
         Read in header, metadata and data from a uvfits file.
@@ -658,7 +658,7 @@ class UVFITS(UVData):
                 vis_hdu,
                 run_check_acceptability,
                 background_lsts=background_lsts,
-                use_astropy=use_astropy,
+                use_novas=use_novas,
             )
             # If we find the source attribute in the FITS random paramter list,
             # the multi_object attribute will be set to True, and we should also

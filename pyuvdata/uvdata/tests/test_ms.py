@@ -52,7 +52,7 @@ def test_cotter_ms():
             "The uvw_array does not match the expected values",
         ],
     ):
-        uvobj2.read(testfile, freq_chans=np.arange(2), use_astropy=False)
+        uvobj2.read(testfile, freq_chans=np.arange(2))
     uvobj.select(freq_chans=np.arange(2))
     assert uvobj == uvobj2
     del uvobj
