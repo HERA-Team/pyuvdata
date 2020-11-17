@@ -617,6 +617,7 @@ def test_remove_dig_gains():
     dig_gains1 = dig_gains1[:, :, np.newaxis, np.newaxis]
     dig_gains2 = dig_gains2[:, :, np.newaxis, np.newaxis]
     uv2.data_array = uv2.data_array / (dig_gains1 * dig_gains2)
+    uv2.history = uv1.history
 
     assert uv1 == uv2
 
@@ -641,6 +642,7 @@ def test_remove_coarse_band():
     uv2.data_array = uv2.data_array.swapaxes(2, 3)
     uv2.data_array = uv2.data_array / cb_array
     uv2.data_array = uv2.data_array.swapaxes(2, 3)
+    uv2.history = uv1.history
 
     assert uv1 == uv2
 

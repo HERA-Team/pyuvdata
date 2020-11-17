@@ -288,6 +288,8 @@ class MWACorrFITS(UVData):
             / const.c.to("m/s").value
             * self.freq_array.reshape(1, self.Nfreqs)
         )[:, :, None]
+        history_add_string = " Applied cable length correction."
+        self.history += history_add_string
 
     def flag_init(
         self,
@@ -449,6 +451,7 @@ class MWACorrFITS(UVData):
         data_array_dtype : numpy dtype
             Datatype to store the output data_array as.
         """
+        history_add_string = " Applied Van Vleck correction."
         # need data array to have 64 bit precision
         if self.data_array.dtype != np.complex128:
             self.data_array = self.data_array.astype(np.complex128)
@@ -494,6 +497,7 @@ class MWACorrFITS(UVData):
         )
         # correct crosses
         if cheby_approx:
+            history_add_string += " Used Van Vleck Chebychev approximation."
             # load in interpolation files
             with open(DATA_PATH + "/mwa_config_data/Chebychev_coeff.npy", "rb") as f:
                 rho_coeff = np.load(f)
@@ -622,6 +626,7 @@ class MWACorrFITS(UVData):
         # return data array to desired precision
         if self.data_array.dtype != data_array_dtype:
             self.data_array = self.data_array.astype(data_array_dtype)
+        self.history += history_add_string
 
     def read_mwa_corr_fits(
         self,
@@ -1209,6 +1214,7 @@ class MWACorrFITS(UVData):
             )
             # divide out digital gains
             if remove_dig_gains:
+                self.history += " Divided out digital gains."
                 # get gains for included coarse channels
                 coarse_inds = np.where(np.isin(coarse_chans, included_coarse_chans))[0]
                 # during commissioning a shift in the bit selection in the digital
@@ -1225,6 +1231,7 @@ class MWACorrFITS(UVData):
 
             # divide out coarse band shape
             if remove_coarse_band:
+                self.history += " Divided out coarse channel bandpass."
                 # get coarse band shape
                 with open(
                     DATA_PATH + "/mwa_config_data/MWA_rev_cb_10khz_doubles.txt", "r"
