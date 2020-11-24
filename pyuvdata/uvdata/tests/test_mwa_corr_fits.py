@@ -839,6 +839,11 @@ def test_van_vleck_cheby():
     uv2 = UVData()
     uv2.read(filelist[10])
 
+    # select only good ants
+    good_ants = np.delete(np.arange(128), 76)
+    uv1.select(antenna_nums=good_ants)
+    uv2.select(antenna_nums=good_ants)
+
     assert np.allclose(uv1.data_array, uv2.data_array)
 
 

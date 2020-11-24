@@ -131,11 +131,13 @@ def van_vleck_autos(sighat_arr):
         Array of quantized sigma to be corrected.
     """
     nonzero_inds = np.where(sighat_arr != 0)[0]
+    # nonzero_inds = np.where(sighat_arr > 0.9)[0]
     sighat = sighat_arr[nonzero_inds]
     if len(sighat) > 0:
         guess = np.copy(sighat)
         inds = np.where(np.abs(sighat_vector(guess) - sighat) > 1e-10)[0]
         while len(inds) != 0:
+            print(len(inds))
             guess[inds] = guess[inds] - (
                 (sighat_vector(guess[inds]) - sighat[inds])
                 / sighat_vector_prime(guess[inds])
@@ -433,8 +435,9 @@ class MWACorrFITS(UVData):
                 self.flag_array[time_ind, :, file_nums_to_index[file_num], :] = False
         return
 
-    # @profile
-    def van_vleck_correction(self, cheby_approx, data_array_dtype):
+    def van_vleck_correction(
+        self, flagged_ants, bad_ant_inds, cheby_approx, data_array_dtype
+    ):
         """
         Apply a van vleck correction to the data array.
 
@@ -473,6 +476,10 @@ class MWACorrFITS(UVData):
         crosses = np.where(
             self.ant_1_array[0 : self.Nbls] != self.ant_2_array[0 : self.Nbls]
         )[0]
+        # get good crosses
+        crosses = np.delete(crosses, np.nonzero(np.in1d(crosses, bad_ant_inds))[0])
+        # get unflagged ants
+        good_autos = np.delete(autos, flagged_ants)
         # find polarizations
         xx = np.where(self.polarization_array == -5)[0][0]
         yy = np.where(self.polarization_array == -6)[0][0]
@@ -490,10 +497,14 @@ class MWACorrFITS(UVData):
             self.data_array.real[auto_inds, :, pols]
         )
         # correct autos
-        sighat = self.data_array.real[auto_inds, :, pols].flatten()
+        sighat = self.data_array.real[good_autos[:, np.newaxis], :, pols].flatten()
+        # sighat = self.data_array.real[auto_inds, :, pols].flatten()
         sigma = van_vleck_autos(sighat)
-        self.data_array.real[auto_inds, :, pols] = sigma.reshape(
-            len(autos), len(pols), self.Ntimes * self.Nfreqs
+        # self.data_array.real[auto_inds, :, pols] = sigma.reshape(
+        #     len(autos), len(pols), self.Ntimes * self.Nfreqs
+        # )
+        self.data_array.real[good_autos[:, np.newaxis], :, pols] = sigma.reshape(
+            len(good_autos), len(pols), self.Ntimes * self.Nfreqs
         )
         # correct crosses
         if cheby_approx:
@@ -505,6 +516,16 @@ class MWACorrFITS(UVData):
                 sig_vec = np.load(f)
             rho_coeff = rho_coeff[:, :, np.array([1, 3, 5])]
             sigs = self.data_array.real[autos[:, np.newaxis], :, pols]
+            # look for smol sigmas
+            smol_inds = np.nonzero(np.logical_and(sigs != 0, sigs <= 0.9))[0]
+            smol_ants = np.floor(smol_inds / (len(pols) * self.Ntimes * self.Nfreqs))
+            print("num smol autos: " + str(len(smol_ants)))
+            print("smol auto ants: " + str(np.unique(smol_ants)))
+            # look for big sigmas
+            big_inds = np.nonzero(sigs > 4.5)[0]
+            big_ants = np.floor(big_inds / (len(pols) * self.Ntimes * self.Nfreqs))
+            print("num big autos: " + str(len(big_ants)))
+            print("smol big ants: " + str(np.unique(big_ants)))
             # find sigmas within interpolation range
             in_inds = np.logical_and(sigs > 0.9, sigs <= 4.5)
             # get indices and distances for bilinear interpolation
@@ -547,15 +568,18 @@ class MWACorrFITS(UVData):
                     cheby_approx,
                 )
             # correct yx autos
-            broad_inds = np.logical_and(in_inds[:, 0, :], in_inds[:, 1, :])
-            sv_inds_right1 = sv_inds_right[:, 0, :][broad_inds]
-            sv_inds_right2 = sv_inds_right[:, 1, :][broad_inds]
-            ds1 = ds[:, 0, :][broad_inds]
-            ds2 = ds[:, 1, :][broad_inds]
-            self.data_array[autos, :, yx] = van_vleck_crosses_cheby(
-                self.data_array[autos, :, yx],
-                self.data_array.real[autos, :, yy],
-                self.data_array.real[autos, :, xx],
+            sig_inds = self.ant_1_array[good_autos]
+            broad_inds = np.logical_and(
+                in_inds[sig_inds, 0, :], in_inds[sig_inds, 1, :]
+            )
+            sv_inds_right1 = sv_inds_right[sig_inds, 0, :][broad_inds]
+            sv_inds_right2 = sv_inds_right[sig_inds, 1, :][broad_inds]
+            ds1 = ds[sig_inds, 0, :][broad_inds]
+            ds2 = ds[sig_inds, 1, :][broad_inds]
+            self.data_array[good_autos, :, yx] = van_vleck_crosses_cheby(
+                self.data_array[good_autos, :, yx],
+                self.data_array.real[good_autos, :, yy],
+                self.data_array.real[good_autos, :, xx],
                 broad_inds,
                 rho_coeff,
                 sv_inds_right1,
@@ -599,7 +623,7 @@ class MWACorrFITS(UVData):
                         self.Ntimes, self.Npols
                     )
             # correct yx autos
-            for k in autos:
+            for k in good_autos:
                 for j in range(self.Nfreqs):
                     # get data
                     sig1 = self.data_array.real[k, :, j, yy]
@@ -1192,7 +1216,10 @@ class MWACorrFITS(UVData):
             # van vleck correction
             if correct_van_vleck:
                 self.van_vleck_correction(
-                    cheby_approx=cheby_approx, data_array_dtype=data_array_dtype
+                    flagged_ants,
+                    bad_ant_inds,
+                    cheby_approx=cheby_approx,
+                    data_array_dtype=data_array_dtype,
                 )
             else:
                 # when MWA data is cast to float for the correlator, the division
