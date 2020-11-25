@@ -496,6 +496,7 @@ class MWACorrFITS(UVData):
         self.data_array.real[auto_inds, :, pols] = np.sqrt(
             self.data_array.real[auto_inds, :, pols]
         )
+        sigs = self.data_array.real[autos[:, np.newaxis], :, pols].flatten()
         # correct autos
         sighat = self.data_array.real[good_autos[:, np.newaxis], :, pols].flatten()
         # sighat = self.data_array.real[auto_inds, :, pols].flatten()
@@ -516,8 +517,9 @@ class MWACorrFITS(UVData):
                 sig_vec = np.load(f)
             rho_coeff = rho_coeff[:, :, np.array([1, 3, 5])]
             sigs = self.data_array.real[autos[:, np.newaxis], :, pols]
-            # look for smol sigmas
-            smol_inds = np.nonzero(np.logical_and(sigs != 0, sigs <= 0.9))[0]
+            smol_inds = np.nonzero(
+                np.logical_and(sigs.flatten() != 0, sigs.flatten() <= 0.9)
+            )[0]
             smol_ants = np.floor(smol_inds / (len(pols) * self.Ntimes * self.Nfreqs))
             print("num smol autos: " + str(len(smol_ants)))
             print("smol auto ants: " + str(np.unique(smol_ants)))
@@ -636,7 +638,9 @@ class MWACorrFITS(UVData):
                     kap = van_vleck_crosses_int(khat.imag, sig1, sig2, cheby_approx)
                     self.data_array.imag[k, :, j, yx] = kap
         # correct xy autos
-        self.data_array[autos, :, :, xy] = np.conj(self.data_array[autos, :, :, yx])
+        self.data_array[good_autos, :, :, xy] = np.conj(
+            self.data_array[good_autos, :, :, yx]
+        )
         # square autos
         self.data_array.real[auto_inds, :, :, pols] = (
             self.data_array.real[auto_inds, :, :, pols] ** 2
