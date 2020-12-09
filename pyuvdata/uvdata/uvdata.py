@@ -6410,12 +6410,14 @@ class UVData(UVBase):
         correct_cable_len=False,
         correct_van_vleck=False,
         cheby_approx=True,
+        flag_small_sig_ants=True,
         propagate_coarse_flags=True,
         flag_init=True,
         edge_width=80e3,
         start_flag="goodtime",
         end_flag=0.0,
         flag_dc_offset=True,
+        remove_flagged_ants=True,
         phase_to_pointing_center=False,
         read_data=True,
         data_array_dtype=np.complex64,
@@ -6461,6 +6463,10 @@ class UVData(UVBase):
         cheby_approx : bool
             Only used if correct_van_vleck is True. Option to implement the van
             vleck correction with a chebyshev polynomial approximation.
+        flag_small_sig_ants : bool
+            Only used if correct_van_vleck is True. Option to completely flag any
+            antenna that has a sigma < 0.5. If set to False, only the times and
+            frequencies at which sigma < 0.5 will be flagged for the antenna.
         propagate_coarse_flags : bool
             Option to propagate flags for missing coarse channel integrations
             across frequency.
@@ -6487,6 +6493,10 @@ class UVData(UVBase):
             Only used if flag_init is True. Set to True to flag the center fine
             channel of each coarse channel. Only used if file_type is
             'mwa_corr_fits'.
+        remove_flagged_ants : bool
+            Option to perform a select to remove antennas flagged in the metafits
+            file. If flag_small_sig_ants is True then antennas flagged by the Van
+            Vleck correction are also removed.
         phase_to_pointing_center : bool
             Option to phase to the observation pointing center.
         read_data : bool
@@ -6549,12 +6559,14 @@ class UVData(UVBase):
             correct_cable_len=correct_cable_len,
             correct_van_vleck=correct_van_vleck,
             cheby_approx=cheby_approx,
+            flag_small_sig_ants=flag_small_sig_ants,
             propagate_coarse_flags=propagate_coarse_flags,
             flag_init=flag_init,
             edge_width=edge_width,
             start_flag=start_flag,
             end_flag=end_flag,
             flag_dc_offset=flag_dc_offset,
+            remove_flagged_ants=remove_flagged_ants,
             phase_to_pointing_center=phase_to_pointing_center,
             read_data=read_data,
             data_array_dtype=data_array_dtype,
@@ -6936,12 +6948,14 @@ class UVData(UVBase):
         correct_cable_len=False,
         correct_van_vleck=False,
         cheby_approx=True,
+        flag_small_sig_ants=True,
         propagate_coarse_flags=True,
         flag_init=True,
         edge_width=80e3,
         start_flag="goodtime",
         end_flag=0.0,
         flag_dc_offset=True,
+        remove_flagged_ants=True,
         phase_to_pointing_center=False,
         skip_bad_files=False,
         multidim_index=False,
@@ -7113,6 +7127,11 @@ class UVData(UVBase):
             Only used if file_type is 'mwa_corr_fits' and correct_van_vleck is True.
             Option to implement the van vleck correction with a chebyshev polynomial
             approximation. Set to False to run the integral version of the correction.
+        flag_small_sig_ants : bool
+            Only used if correct_van_vleck is True. Option to completely flag any
+            antenna that has a sigma < 0.5. If set to False, only the times and
+            frequencies at which sigma < 0.5 will be flagged for the antenna.
+            Only used if file_type is 'mwa_corr_fits'.
         propogate_coarse_flags : bool
             Option to propogate flags for missing coarse channel integrations
             across frequency. Only used if file_type is 'mwa_corr_fits'.
@@ -7142,6 +7161,11 @@ class UVData(UVBase):
             Only used if file_type is 'mwa_corr_fits' and flag_init is True. Set
             to True to flag the center fine channel of each coarse channel. Only
             used if file_type is 'mwa_corr_fits'.
+        remove_flagged_ants : bool
+            Option to perform a select to remove antennas flagged in the metafits
+            file. If flag_small_sig_ants is True then antennas flagged by the Van
+            Vleck correction are also removed. Only used if file_type is
+            'mwa_corr_fits'.
         phase_to_pointing_center : bool
             Flag to phase to the pointing center. Only used if file_type is
             'mwa_corr_fits'. Cannot be set if phase_center_radec is not None.
@@ -7598,12 +7622,14 @@ class UVData(UVBase):
                     correct_cable_len=correct_cable_len,
                     correct_van_vleck=correct_van_vleck,
                     cheby_approx=cheby_approx,
+                    flag_small_sig_ants=flag_small_sig_ants,
                     propagate_coarse_flags=propagate_coarse_flags,
                     flag_init=flag_init,
                     edge_width=edge_width,
                     start_flag=start_flag,
                     end_flag=end_flag,
                     flag_dc_offset=True,
+                    remove_flagged_ants=remove_flagged_ants,
                     phase_to_pointing_center=phase_to_pointing_center,
                     read_data=read_data,
                     data_array_dtype=data_array_dtype,

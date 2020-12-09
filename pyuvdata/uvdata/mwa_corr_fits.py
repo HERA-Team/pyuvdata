@@ -130,9 +130,9 @@ def van_vleck_autos(sighat_arr):
     sighat_arr : numpy array
         Array of quantized sigma to be corrected.
     """
-    nonzero_inds = np.where(sighat_arr != 0)[0]
-    # nonzero_inds = np.where(sighat_arr > 0.9)[0]
-    sighat = sighat_arr[nonzero_inds]
+    # cut off small sigmas that will not converge
+    cutoff_inds = np.where(sighat_arr > 0.5)[0]
+    sighat = sighat_arr[cutoff_inds]
     if len(sighat) > 0:
         guess = np.copy(sighat)
         inds = np.where(np.abs(sighat_vector(guess) - sighat) > 1e-10)[0]
@@ -143,7 +143,7 @@ def van_vleck_autos(sighat_arr):
                 / sighat_vector_prime(guess[inds])
             )
             inds = np.where(np.abs(sighat_vector(guess) - sighat) > 1e-10)[0]
-        sighat_arr[nonzero_inds] = guess
+        sighat_arr[cutoff_inds] = guess
 
     return sighat_arr
 
@@ -436,7 +436,12 @@ class MWACorrFITS(UVData):
         return
 
     def van_vleck_correction(
-        self, flagged_ants, bad_ant_inds, cheby_approx, data_array_dtype
+        self,
+        flagged_ants,
+        cheby_approx,
+        data_array_dtype,
+        remove_flagged_ants,
+        flag_small_sig_ants,
     ):
         """
         Apply a van vleck correction to the data array.
@@ -476,10 +481,6 @@ class MWACorrFITS(UVData):
         crosses = np.where(
             self.ant_1_array[0 : self.Nbls] != self.ant_2_array[0 : self.Nbls]
         )[0]
-        # get good crosses
-        crosses = np.delete(crosses, np.nonzero(np.in1d(crosses, bad_ant_inds))[0])
-        # get unflagged ants
-        good_autos = np.delete(autos, flagged_ants)
         # find polarizations
         xx = np.where(self.polarization_array == -5)[0][0]
         yy = np.where(self.polarization_array == -6)[0][0]
@@ -496,17 +497,54 @@ class MWACorrFITS(UVData):
         self.data_array.real[auto_inds, :, pols] = np.sqrt(
             self.data_array.real[auto_inds, :, pols]
         )
-        sigs = self.data_array.real[autos[:, np.newaxis], :, pols].flatten()
-        # correct autos
+        # look for small sigmas that will not converge
+        small_sig_flags = np.logical_and(
+            self.data_array.real[auto_inds, :, pols] != 0,
+            self.data_array.real[auto_inds, :, pols] <= 0.5,
+        )
+        if flag_small_sig_ants:
+            # find antenna indices for small sig ants and add to flagged_ants
+            ant_inds = np.unique(np.nonzero(small_sig_flags)[0])
+            ant_inds = ant_inds[~np.in1d(ant_inds, flagged_ants)]
+            if len(ant_inds) != 0:
+                history_add_string += (
+                    " The following antennas were flagged by the Van Vleck \
+                    correction and removed from the data: "
+                    + str(ant_inds)
+                    + "."
+                )
+                flagged_ants = np.concatenate((flagged_ants, ant_inds))
+        else:
+            # get flags for small sig ants and add to flag array
+            small_sig_flags = np.logical_or(
+                small_sig_flags[:, 0, :], small_sig_flags[:, 1, :]
+            )
+            small_sig_flags = np.logical_or(
+                small_sig_flags[self.ant_1_array, :],
+                small_sig_flags[self.ant_2_array, :],
+            )
+            small_sig_flags = small_sig_flags.reshape(
+                self.Nbls, self.Ntimes, self.Nfreqs
+            )
+            small_sig_flags = np.swapaxes(small_sig_flags, 0, 1)
+            small_sig_flags = small_sig_flags[:, :, :, np.newaxis]
+            self.flag_array = np.logical_or(self.flag_array, small_sig_flags)
+        # get unflagged autos
+        good_autos = np.delete(autos, flagged_ants)
         sighat = self.data_array.real[good_autos[:, np.newaxis], :, pols].flatten()
-        # sighat = self.data_array.real[auto_inds, :, pols].flatten()
+        # correct autos
         sigma = van_vleck_autos(sighat)
-        # self.data_array.real[auto_inds, :, pols] = sigma.reshape(
-        #     len(autos), len(pols), self.Ntimes * self.Nfreqs
-        # )
         self.data_array.real[good_autos[:, np.newaxis], :, pols] = sigma.reshape(
             len(good_autos), len(pols), self.Ntimes * self.Nfreqs
         )
+        # get good crosses
+        bad_ant_inds = np.nonzero(
+            np.logical_or(
+                np.in1d(self.ant_1_array[0 : self.Nbls], flagged_ants),
+                np.in1d(self.ant_2_array[0 : self.Nbls], flagged_ants),
+            )
+        )[0]
+        crosses = np.delete(crosses, np.nonzero(np.in1d(crosses, bad_ant_inds))[0])
         # correct crosses
         if cheby_approx:
             history_add_string += " Used Van Vleck Chebychev approximation."
@@ -656,6 +694,8 @@ class MWACorrFITS(UVData):
             self.data_array = self.data_array.astype(data_array_dtype)
         self.history += history_add_string
 
+        return flagged_ants
+
     def read_mwa_corr_fits(
         self,
         filelist,
@@ -665,6 +705,7 @@ class MWACorrFITS(UVData):
         correct_cable_len=False,
         correct_van_vleck=False,
         cheby_approx=True,
+        flag_small_sig_ants=True,
         phase_to_pointing_center=False,
         propagate_coarse_flags=True,
         flag_init=True,
@@ -672,6 +713,7 @@ class MWACorrFITS(UVData):
         start_flag="goodtime",
         end_flag=0.0,
         flag_dc_offset=True,
+        remove_flagged_ants=True,
         background_lsts=True,
         read_data=True,
         data_array_dtype=np.complex64,
@@ -717,6 +759,10 @@ class MWACorrFITS(UVData):
         cheby_approx : bool
             Only used if correct_van_vleck is True. Option to implement the van
             vleck correction with a chebyshev polynomial approximation.
+        flag_small_sig_ants : bool
+            Only used if correct_van_vleck is True. Option to completely flag any
+            antenna that has a sigma < 0.5. If set to False, only the times and
+            frequencies at which sigma < 0.5 will be flagged for the antenna.
         phase_to_pointing_center : bool
             Option to phase to the observation pointing center.
         propagate_coarse_flags : bool
@@ -744,6 +790,10 @@ class MWACorrFITS(UVData):
         flag_dc_offset: bool
             Only used if flag_init is True. Set to True to flag the center fine
             channel of each coarse channel.
+        remove_flagged_ants : bool
+            Option to perform a select to remove antennas flagged in the metafits
+            file. If flag_small_sig_ants is True then antennas flagged by the Van
+            Vleck correction are also removed.
         background_lsts : bool
             When set to True, the lst_array is calculated in a background thread.
         read_data : bool
@@ -1209,21 +1259,14 @@ class MWACorrFITS(UVData):
 
             self.data_array = np.swapaxes(self.data_array, 1, 2)
 
-            # generage baseline flags for flagged ants
-            bad_ant_inds = np.nonzero(
-                np.logical_or(
-                    np.in1d(ant_1_array, flagged_ants),
-                    np.in1d(ant_2_array, flagged_ants),
-                )
-            )[0]
-            self.flag_array[:, bad_ant_inds, :, :] = True
             # van vleck correction
             if correct_van_vleck:
-                self.van_vleck_correction(
+                flagged_ants = self.van_vleck_correction(
                     flagged_ants,
-                    bad_ant_inds,
                     cheby_approx=cheby_approx,
                     data_array_dtype=data_array_dtype,
+                    remove_flagged_ants=remove_flagged_ants,
+                    flag_small_sig_ants=flag_small_sig_ants,
                 )
             else:
                 # when MWA data is cast to float for the correlator, the division
@@ -1281,38 +1324,10 @@ class MWACorrFITS(UVData):
                 self.correct_cable_length(cable_lens)
 
             # add spectral window index
+            # TODO: Spw axis to be collapsed in future release
             self.data_array = self.data_array[:, np.newaxis, :, :]
             self.flag_array = self.flag_array[:, np.newaxis, :, :]
             self.nsample_array = self.nsample_array[:, np.newaxis, :, :]
-
-            # because of an annoying discrepancy between file conventions, in order
-            # to be consistent with the uvw vector direction, all the data must
-            # be conjugated
-            self.data_array = np.conj(self.data_array)
-
-        # wait for LSTs if set in background
-        if proc is not None:
-            proc.join()
-
-        if not self.metadata_only:
-            # reorder polarizations
-            # reorder pols calls check so must come after
-            # lst thread is re-joined.
-            self.reorder_pols()
-
-        # phasing
-        if phase_to_pointing_center:
-            self.phase(ra_rad, dec_rad)
-
-        if not self.metadata_only:
-            if flag_init:
-                self.flag_init(
-                    num_fine_chans,
-                    edge_width=edge_width,
-                    start_flag=start_flag,
-                    end_flag=end_flag,
-                    flag_dc_offset=flag_dc_offset,
-                )
 
             if use_cotter_flags:
                 # throw an error if matching files not submitted
@@ -1343,6 +1358,50 @@ class MWACorrFITS(UVData):
                         ],
                         flags,
                     )
+            # remove bad antennas or flag bad ants
+            if remove_flagged_ants:
+                good_ants = np.delete(self.antenna_numbers, flagged_ants)
+                self.select(antenna_nums=good_ants)
+            else:
+                # generage baseline flags for flagged ants
+                bad_ant_inds = np.nonzero(
+                    np.logical_or(
+                        np.in1d(self.ant_1_array, flagged_ants),
+                        np.in1d(self.ant_2_array, flagged_ants),
+                    )
+                )[0]
+                # TODO: Spw axis to be collapsed in future release
+                self.flag_array[bad_ant_inds, :, :, :] = True
+
+            if flag_init:
+                self.flag_init(
+                    num_fine_chans,
+                    edge_width=edge_width,
+                    start_flag=start_flag,
+                    end_flag=end_flag,
+                    flag_dc_offset=flag_dc_offset,
+                )
+
+            # to account for discrepancies between file conventions, in order
+            # to be consistent with the uvw vector direction, all the data must
+            # be conjugated
+            self.data_array = np.conj(self.data_array)
+
+        # wait for LSTs if set in background
+        if proc is not None:
+            proc.join()
+
+        if not self.metadata_only:
+            # reorder polarizations
+            # reorder pols calls check so must come after
+            # lst thread is re-joined.
+            self.reorder_pols()
+
+        # phasing
+        if phase_to_pointing_center:
+            self.phase(ra_rad, dec_rad)
+
+        if not self.metadata_only:
 
             # check if object is self-consistent
             # uvws are calcuated using pyuvdata, so turn off the check for speed.
