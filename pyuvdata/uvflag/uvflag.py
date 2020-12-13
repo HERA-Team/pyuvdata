@@ -1198,10 +1198,16 @@ class UVFlag(UVBase):
         if self.type == "waterfall":
             # Populate arrays
             if self.mode == "flag":
-                arr = np.zeros_like(uv.flag_array)
+                if issubclass(uv.__class__, UVData) and uv.future_array_shapes:
+                    arr = np.zeros_like(uv.flag_array[:, np.newaxis, :, :])
+                else:
+                    arr = np.zeros_like(uv.flag_array)
                 sarr = self.flag_array
             elif self.mode == "metric":
-                arr = np.zeros_like(uv.flag_array, dtype=float)
+                if issubclass(uv.__class__, UVData) and uv.future_array_shapes:
+                    arr = np.zeros_like(uv.flag_array[:, np.newaxis, :, :], dtype=float)
+                else:
+                    arr = np.zeros_like(uv.flag_array, dtype=float)
                 warr = np.zeros_like(uv.flag_array, dtype=np.float)
                 sarr = self.metric_array
             for i, t in enumerate(np.unique(self.time_array)):
@@ -2872,7 +2878,10 @@ class UVFlag(UVBase):
 
             self.time_array, ri = np.unique(indata.time_array, return_index=True)
             self.Ntimes = len(self.time_array)
-            self.freq_array = indata.freq_array[0, :]
+            if indata.future_array_shapes:
+                self.freq_array = indata.freq_array
+            else:
+                self.freq_array = indata.freq_array[0, :]
             self.Nspws = None
             self.Nfreqs = len(self.freq_array)
             self.Nblts = len(self.time_array)
@@ -2922,15 +2931,21 @@ class UVFlag(UVBase):
             self.lst_array = indata.lst_array
             self.Ntimes = np.unique(self.time_array).size
 
-            self.freq_array = indata.freq_array
-            self.Nfreqs = np.unique(self.freq_array).size
+            if indata.future_array_shapes:
+                self.freq_array = indata.freq_array[np.newaxis, :]
+            else:
+                self.freq_array = indata.freq_array
+            self.Nfreqs = indata.Nfreqs
             self.Nspws = indata.Nspws
 
             self.polarization_array = indata.polarization_array
             self.Npols = len(self.polarization_array)
             self.Nants_telescope = indata.Nants_telescope
             if copy_flags:
-                self.flag_array = indata.flag_array
+                if indata.future_array_shapes:
+                    self.flag_array = indata.flag_array[:, np.newaxis, :, :]
+                else:
+                    self.flag_array = indata.flag_array
                 self.history += (
                     " Flags copied from " + str(indata.__class__) + " object."
                 )
@@ -2940,12 +2955,11 @@ class UVFlag(UVBase):
                     )
                     self._set_mode_flag()
             else:
+                array_shape = (self.Nblts, self.Nspws, self.Nfreqs, self.Npols)
                 if self.mode == "flag":
-                    self.flag_array = np.zeros_like(indata.flag_array)
+                    self.flag_array = np.zeros(array_shape, dtype=np.bool)
                 elif self.mode == "metric":
-                    self.metric_array = np.zeros_like(indata.flag_array).astype(
-                        np.float
-                    )
+                    self.metric_array = np.zeros(array_shape, dtype=np.float64)
 
         if indata.x_orientation is not None:
             self.x_orientation = indata.x_orientation

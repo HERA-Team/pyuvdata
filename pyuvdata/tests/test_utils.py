@@ -1969,11 +1969,15 @@ def test_uvcalibrate_feedpol_mismatch(uvcalibrate_data):
 
 
 @pytest.mark.filterwarnings("ignore:The uvw_array does not match the expected values")
-def test_apply_uvflag():
+@pytest.mark.parametrize("future_shapes", [True, False])
+def test_apply_uvflag(future_shapes):
     # load data and insert some flags
     uvd = UVData()
     uvd.read(os.path.join(DATA_PATH, "zen.2457698.40355.xx.HH.uvcAA.uvh5"))
     uvd.flag_array[uvd.antpair2ind(9, 20)] = True
+
+    if future_shapes:
+        uvd.use_future_array_shapes()
 
     # load a UVFlag into flag type
     uvf = UVFlag(uvd)

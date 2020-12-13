@@ -2097,7 +2097,10 @@ def apply_uvflag(
             continue
         uvf_ap_inds = uvf.antpair2ind(*ap)
         # addition of boolean is OR
-        uvd.flag_array[uvd_ap_inds] += uvf.flag_array[uvf_ap_inds]
+        if uvd.future_array_shapes:
+            uvd.flag_array[uvd_ap_inds] += uvf.flag_array[uvf_ap_inds, 0, :, :]
+        else:
+            uvd.flag_array[uvd_ap_inds] += uvf.flag_array[uvf_ap_inds]
 
     uvd.history += "\nFlagged with pyuvdata.utils.apply_uvflags."
 
