@@ -1792,10 +1792,14 @@ def uvcalibrate(
                 )
 
     downselect_cal_freq = False
+    if uvdata.future_array_shapes:
+        uvdata_freq_arr_use = uvdata.freq_array
+    else:
+        uvdata_freq_arr_use = uvdata.freq_array[0, :]
     try:
         freq_arr_match = np.allclose(
             np.sort(uvcal.freq_array[0, :]),
-            np.sort(uvdata.freq_array[0, :]),
+            np.sort(uvdata_freq_arr_use),
             atol=uvdata._freq_array.tols[1],
             rtol=uvdata._freq_array.tols[0],
         )
@@ -1805,7 +1809,7 @@ def uvcalibrate(
     if freq_arr_match is False:
         # check more carefully
         uvcal_freqs_to_keep = []
-        for this_freq in uvdata.freq_array[0, :]:
+        for this_freq in uvdata_freq_arr_use:
             wh_freq_match = np.nonzero(
                 np.isclose(
                     uvcal.freq_array - this_freq,
@@ -1931,13 +1935,19 @@ def uvcalibrate(
             uvcal_key2 = (uvcal_ant2_num, feed2)
 
             if uvcal_ant1_num is None or uvcal_ant2_num is None:
-                uvdata.flag_array[blt_inds, 0, :, pol_ind] = True
+                if uvdata.future_array_shapes:
+                    uvdata.flag_array[blt_inds, :, pol_ind] = True
+                else:
+                    uvdata.flag_array[blt_inds, 0, :, pol_ind] = True
                 continue
             elif not uvcal_use._has_key(*uvcal_key1) or not uvcal_use._has_key(
                 *uvcal_key2
             ):
                 if flag_missing:
-                    uvdata.flag_array[blt_inds, 0, :, pol_ind] = True
+                    if uvdata.future_array_shapes:
+                        uvdata.flag_array[blt_inds, :, pol_ind] = True
+                    else:
+                        uvdata.flag_array[blt_inds, 0, :, pol_ind] = True
                 continue
             gain = (
                 uvcal_use.get_gains(uvcal_key1)
@@ -1949,16 +1959,25 @@ def uvcalibrate(
             if prop_flags:
                 mask = np.isclose(gain, 0.0) | flag
                 gain[mask] = 1.0
-                uvdata.flag_array[blt_inds, 0, :, pol_ind] += mask
+                if uvdata.future_array_shapes:
+                    uvdata.flag_array[blt_inds, :, pol_ind] += mask
+                else:
+                    uvdata.flag_array[blt_inds, 0, :, pol_ind] += mask
 
             # apply to data
             mult_gains = uvcal_use.gain_convention == "multiply"
             if undo:
                 mult_gains = not mult_gains
-            if mult_gains:
-                uvdata.data_array[blt_inds, 0, :, pol_ind] *= gain
+            if uvdata.future_array_shapes:
+                if mult_gains:
+                    uvdata.data_array[blt_inds, :, pol_ind] *= gain
+                else:
+                    uvdata.data_array[blt_inds, :, pol_ind] /= gain
             else:
-                uvdata.data_array[blt_inds, 0, :, pol_ind] /= gain
+                if mult_gains:
+                    uvdata.data_array[blt_inds, 0, :, pol_ind] *= gain
+                else:
+                    uvdata.data_array[blt_inds, 0, :, pol_ind] /= gain
 
     # update attributes
     uvdata.history += "\nCalibrated with pyuvdata.utils.uvcalibrate."

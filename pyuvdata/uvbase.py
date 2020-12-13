@@ -330,7 +330,7 @@ class UVBase(object):
 
                     if not this_shape == eshape:
                         raise ValueError(
-                            f"UVParameter {param} is not expected shape. "
+                            f"UVParameter {param.name} is not expected shape. "
                             f"Parameter shape is {this_shape}, expected shape is "
                             f"{eshape}."
                         )

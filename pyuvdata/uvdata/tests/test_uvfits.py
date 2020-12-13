@@ -244,7 +244,8 @@ def test_casa_nonascii_bytes_antenna_names():
 
 @pytest.mark.filterwarnings("ignore:The uvw_array does not match the expected values")
 @pytest.mark.filterwarnings("ignore:Telescope EVLA is not")
-def test_readwriteread(tmp_path, casa_uvfits):
+@pytest.mark.parametrize("future_shapes", [True, False])
+def test_readwriteread(tmp_path, casa_uvfits, future_shapes):
     """
     CASA tutorial uvfits loopback test.
 
@@ -252,11 +253,17 @@ def test_readwriteread(tmp_path, casa_uvfits):
     object equality.
     """
     uv_in = casa_uvfits
+
+    if future_shapes:
+        uv_in.use_future_array_shapes()
+
     uv_out = UVData()
     write_file = str(tmp_path / "outtest_casa.uvfits")
 
     uv_in.write_uvfits(write_file)
     uv_out.read(write_file)
+    if future_shapes:
+        uv_out.use_future_array_shapes()
     assert uv_in == uv_out
 
     return

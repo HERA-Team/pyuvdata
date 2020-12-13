@@ -69,7 +69,8 @@ def uv_in_uvfits(paper_miriad, tmp_path):
 
 @pytest.mark.filterwarnings("ignore:Telescope ATCA is not")
 @pytest.mark.filterwarnings("ignore:The uvw_array does not match the expected values")
-def test_read_write_read_atca(tmp_path):
+@pytest.mark.parametrize("future_shapes", [True, False])
+def test_read_write_read_atca(tmp_path, future_shapes):
     uv_in = UVData()
     uv_out = UVData()
     atca_file = os.path.join(DATA_PATH, "atca_miriad")
@@ -91,8 +92,16 @@ def test_read_write_read_atca(tmp_path):
         ],
     ):
         uv_in.read(atca_file)
+
+    if future_shapes:
+        uv_in.use_future_array_shapes()
+
     uv_in.write_miriad(testfile, clobber=True)
     uv_out.read(testfile)
+
+    if future_shapes:
+        uv_out.use_future_array_shapes()
+
     assert uv_in == uv_out
 
 

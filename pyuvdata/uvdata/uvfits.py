@@ -767,17 +767,20 @@ class UVFITS(UVData):
         if self.flex_spw:
             # If we have a 'flexible' spectral window, we will need to evaluate the
             # frequency axis slightly differently.
+            if self.future_array_shapes:
+                freq_array_use = self.freq_array
+            else:
+                freq_array_use = self.freq_array[0, :]
             nchan_list = []
             start_freq_array = []
             delta_freq_array = []
             for idx in range(self.Nspws):
                 chan_mask = self.flex_spw_id_array == idx
                 nchan_list += [np.sum(chan_mask)]
-                # TODO: Spw axis to be collapsed in future release
-                start_freq_array += [self.freq_array[0, chan_mask][0]]
+                start_freq_array += [freq_array_use[chan_mask][0]]
                 # Need the array direction here since channel_width is always supposed
                 # to be > 0, but channels can be in decending freq order
-                freq_dir = np.sign(np.median(np.diff(self.freq_array[0, chan_mask])))
+                freq_dir = np.sign(np.median(np.diff(freq_array_use[chan_mask])))
                 delta_freq_array += [
                     np.median(self.channel_width[chan_mask]) * freq_dir
                 ]
@@ -814,8 +817,16 @@ class UVFITS(UVData):
             # other exciting things...
             ref_freq = start_freq_array[0, 0]
         else:
-            delta_freq_array = np.array([[self.channel_width]]).astype(np.float)
-            ref_freq = self.freq_array[0, 0]
+            if self.future_array_shapes:
+                ref_freq = self.freq_array[0]
+                # we've already run the check_freq_spacing, so channel widths are the
+                # same to our tolerances
+                delta_freq_array = np.array([[np.median(self.channel_width)]]).astype(
+                    np.float
+                )
+            else:
+                ref_freq = self.freq_array[0, 0]
+                delta_freq_array = np.array([[self.channel_width]]).astype(np.float)
 
         if self.Npols > 1:
             pol_spacing = np.diff(self.polarization_array)
@@ -1116,7 +1127,10 @@ class UVFITS(UVData):
         ant_hdu.header["FRAME"] = "ITRF"
         ant_hdu.header["GSTIA0"] = self.gst0
         # TODO Karto: Do this more intelligently in the future
-        ant_hdu.header["FREQ"] = self.freq_array[0, 0]
+        if self.future_array_shapes:
+            ant_hdu.header["FREQ"] = self.freq_array[0]
+        else:
+            ant_hdu.header["FREQ"] = self.freq_array[0, 0]
         ant_hdu.header["RDATE"] = self.rdate
         ant_hdu.header["UT1UTC"] = self.dut1
 

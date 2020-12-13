@@ -21,6 +21,11 @@ from pyuvdata.data import DATA_PATH
 ref_latlonalt = (-26.7 * np.pi / 180.0, 116.7 * np.pi / 180.0, 377.8)
 ref_xyz = (-2562123.42683, 5094215.40141, -2848728.58869)
 
+pytestmark = pytest.mark.filterwarnings(
+    "ignore:telescope_location is not set. Using known values",
+    "ignore:antenna_positions is not set. Using known values",
+)
+
 
 pytestmark = pytest.mark.filterwarnings(
     "ignore:telescope_location is not set. Using known values for HERA.",
@@ -1453,8 +1458,12 @@ def test_uvcalibrate_delay_oldfiles():
     assert uvdcal == uvdcal2
 
 
-def test_uvcalibrate_divide(uvcalibrate_data):
+@pytest.mark.parametrize("future_shapes", [True, False])
+def test_uvcalibrate_divide(uvcalibrate_data, future_shapes):
     uvd, uvc = uvcalibrate_data
+
+    if future_shapes:
+        uvd.use_future_array_shapes()
 
     # set the gain_scale to "Jy" to test that vis units are set properly
     assert uvc.gain_convention == "divide"
@@ -1481,8 +1490,12 @@ def test_uvcalibrate_divide(uvcalibrate_data):
     assert uvdcal.vis_units == "UNCALIB"
 
 
-def test_uvcalibrate_multiply(uvcalibrate_data):
+@pytest.mark.parametrize("future_shapes", [True, False])
+def test_uvcalibrate_multiply(uvcalibrate_data, future_shapes):
     uvd, uvc = uvcalibrate_data
+
+    if future_shapes:
+        uvd.use_future_array_shapes()
 
     # use multiply gain convention
     uvc.gain_convention = "multiply"
@@ -1531,8 +1544,12 @@ def test_uvcalibrate_dterm_handling(uvcalibrate_data):
 
 
 @pytest.mark.filterwarnings("ignore:Cannot preserve total_quality_array")
-def test_uvcalibrate_flag_propagation(uvcalibrate_data):
+@pytest.mark.parametrize("future_shapes", [True, False])
+def test_uvcalibrate_flag_propagation(uvcalibrate_data, future_shapes):
     uvd, uvc = uvcalibrate_data
+
+    if future_shapes:
+        uvd.use_future_array_shapes()
 
     # test flag propagation
     uvc.flag_array[0] = True
