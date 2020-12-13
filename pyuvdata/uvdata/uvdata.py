@@ -5692,7 +5692,6 @@ class UVData(UVBase):
                                 )
                                 mask[:, ax1_inds, ax2_inds, ax3_inds] = False
 
-                        print("mask shape:", mask.shape)
                         masked_data = np.ma.masked_array(
                             self.data_array[averaging_idx], mask=mask
                         )
