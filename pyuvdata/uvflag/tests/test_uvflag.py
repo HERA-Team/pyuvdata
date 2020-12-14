@@ -216,20 +216,31 @@ def test_init_uvdata_x_orientation(uvdata_obj):
 
 
 @pytest.mark.filterwarnings("ignore:The uvw_array does not match the expected values")
-def test_init_uvdata_copy_flags(uvdata_obj):
+@pytest.mark.parametrize("future_shapes", [True, False])
+def test_init_uvdata_copy_flags(uvdata_obj, future_shapes):
     uv = uvdata_obj
+
+    if future_shapes:
+        uv.use_future_array_shapes()
+
     with uvtest.check_warnings(UserWarning, 'Copying flags to type=="baseline"'):
         uvf = UVFlag(uv, copy_flags=True, mode="metric")
     #  with copy flags uvf.metric_array should be none
     assert hasattr(uvf, "metric_array")
     assert uvf.metric_array is None
-    assert np.array_equal(uvf.flag_array, uv.flag_array)
+    if future_shapes:
+        assert np.array_equal(uvf.flag_array[:, 0, :, :], uv.flag_array)
+    else:
+        assert np.array_equal(uvf.flag_array, uv.flag_array)
     assert uvf.weights_array is None
     assert uvf.type == "baseline"
     assert uvf.mode == "flag"
     assert np.all(uvf.time_array == uv.time_array)
     assert np.all(uvf.lst_array == uv.lst_array)
-    assert np.all(uvf.freq_array == uv.freq_array[0])
+    if future_shapes:
+        assert np.all(uvf.freq_array == uv.freq_array)
+    else:
+        assert np.all(uvf.freq_array == uv.freq_array[0])
     assert np.all(uvf.polarization_array == uv.polarization_array)
     assert np.all(uvf.baseline_array == uv.baseline_array)
     assert np.all(uvf.ant_1_array == uv.ant_1_array)
@@ -320,8 +331,13 @@ def test_init_cal_copy_flags():
 
 
 @pytest.mark.filterwarnings("ignore:The uvw_array does not match the expected values")
-def test_init_waterfall_uvd(uvdata_obj):
+@pytest.mark.parametrize("future_shapes", [True, False])
+def test_init_waterfall_uvd(uvdata_obj, future_shapes):
     uv = uvdata_obj
+
+    if future_shapes:
+        uv.use_future_array_shapes()
+
     uvf = UVFlag(uv, waterfall=True)
     assert uvf.metric_array.shape == (uv.Ntimes, uv.Nfreqs, uv.Npols)
     assert np.all(uvf.metric_array == 0)
@@ -331,7 +347,10 @@ def test_init_waterfall_uvd(uvdata_obj):
     assert uvf.mode == "metric"
     assert np.all(uvf.time_array == np.unique(uv.time_array))
     assert np.all(uvf.lst_array == np.unique(uv.lst_array))
-    assert np.all(uvf.freq_array == uv.freq_array[0])
+    if future_shapes:
+        assert np.all(uvf.freq_array == uv.freq_array)
+    else:
+        assert np.all(uvf.freq_array == uv.freq_array[0])
     assert np.all(uvf.polarization_array == uv.polarization_array)
     assert 'Flag object with type "waterfall"' in uvf.history
     assert pyuvdata_version_str in uvf.history
@@ -1350,8 +1369,13 @@ def test_to_baseline_flags(uvdata_obj):
 
 
 @pytest.mark.filterwarnings("ignore:The uvw_array does not match the expected values")
-def test_to_baseline_metric(uvdata_obj):
+@pytest.mark.parametrize("future_shapes", [True, False])
+def test_to_baseline_metric(uvdata_obj, future_shapes):
     uv = uvdata_obj
+
+    if future_shapes:
+        uv.use_future_array_shapes()
+
     uvf = UVFlag(uv)
     uvf.to_waterfall()
     uvf.metric_array[0, 10, 0] = 3.2  # Fill in time0, chan10
