@@ -65,7 +65,8 @@ def uv_in_uvh5(tmp_path):
 
 
 @pytest.mark.filterwarnings("ignore:LST values stored in this file are not ")
-def test_read_mir_write_uvfits(uv_in_uvfits):
+@pytest.mark.parametrize("future_shapes", [True, False])
+def test_read_mir_write_uvfits(uv_in_uvfits, future_shapes):
     """
     Mir to uvfits loopback test.
 
@@ -74,8 +75,14 @@ def test_read_mir_write_uvfits(uv_in_uvfits):
     """
     mir_uv, uvfits_uv, testfile = uv_in_uvfits
 
+    if future_shapes:
+        mir_uv.use_future_array_shapes()
+
     mir_uv.write_uvfits(testfile, spoof_nonessential=True)
     uvfits_uv.read_uvfits(testfile)
+
+    if future_shapes:
+        uvfits_uv.use_future_array_shapes()
 
     # Check the history first via find
     assert 0 == uvfits_uv.history.find(

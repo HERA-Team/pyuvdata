@@ -1749,8 +1749,12 @@ def test_uvcalibrate_extra_cal_antennas(uvcalibrate_data):
     )
 
 
-def test_uvcalibrate_antenna_names_mismatch(uvcalibrate_init_data):
+@pytest.mark.parametrize("future_shapes", [True, False])
+def test_uvcalibrate_antenna_names_mismatch(uvcalibrate_init_data, future_shapes):
     uvd, uvc = uvcalibrate_init_data
+
+    if future_shapes:
+        uvd.use_future_array_shapes()
 
     with uvtest.check_warnings(
         DeprecationWarning,

@@ -3310,7 +3310,6 @@ class UVData(UVBase):
                 this_inds = np.ravel_multi_index(
                     (
                         this_blts_ind[:, np.newaxis, np.newaxis],
-                        np.zeros((1, 1, 1), dtype=np.int),
                         this_freq_ind[np.newaxis, :, np.newaxis],
                         this_pol_ind[np.newaxis, np.newaxis, :],
                     ),
@@ -3319,7 +3318,6 @@ class UVData(UVBase):
                 other_inds = np.ravel_multi_index(
                     (
                         other_blts_ind[:, np.newaxis, np.newaxis],
-                        np.zeros((1, 1, 1, 1), dtype=np.int),
                         other_freq_ind[np.newaxis, :, np.newaxis],
                         other_pol_ind[np.newaxis, np.newaxis, :],
                     ),
@@ -3373,6 +3371,10 @@ class UVData(UVBase):
             n_axes += 1
         else:
             bnew_inds, new_blts = ([], [])
+
+        # if there's any overlap in blts, check extra params
+        temp = np.nonzero(np.in1d(other_blts, this_blts))[0]
+        if len(temp) > 0:
             # add metadata to be checked to compatibility params
             extra_params = ["_integration_time", "_uvw_array", "_lst_array"]
             compatibility_params.extend(extra_params)
@@ -3393,9 +3395,15 @@ class UVData(UVBase):
             n_axes += 1
         else:
             fnew_inds = []
-            if this.future_array_shapes:
+
+        # if channel width is an array and there's any overlap in freqs,
+        # check extra params
+        if this.future_array_shapes or this.Nspws > 1:
+            temp = np.nonzero(np.in1d(other.freq_array, this.freq_array))[0]
+            if len(temp) > 0:
                 # add metadata to be checked to compatibility params
                 extra_params = ["_channel_width"]
+                compatibility_params.extend(extra_params)
 
         # find the pol indices in "other" but not in "this"
         temp = np.nonzero(~np.in1d(other.polarization_array, this.polarization_array))[

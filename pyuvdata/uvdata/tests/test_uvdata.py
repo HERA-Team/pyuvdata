@@ -574,6 +574,18 @@ def test_future_array_shape(uvdata_data):
 
     assert uvobj == uvdata_data.uv_object2
 
+    uvobj.use_future_array_shapes()
+    uvobj.channel_width[-1] = uvobj.channel_width[0] * 2.0
+    uvobj.check()
+
+    with pytest.raises(
+        ValueError, match="channel_width parameter contains multiple unique values"
+    ):
+        uvobj.use_current_array_shapes()
+
+    with pytest.raises(ValueError, match="The frequencies are not evenly spaced"):
+        uvobj._check_freq_spacing()
+
 
 @pytest.mark.filterwarnings("ignore:Telescope EVLA is not")
 @pytest.mark.filterwarnings("ignore:The uvw_array does not match the expected values")
@@ -2495,19 +2507,35 @@ def test_sum_vis(casa_uvfits, future_shapes):
         3554841.17192104,
     ]
 
-    # check error messages
-    with pytest.raises(ValueError) as cm:
-        uv_overrides = uv_overrides.sum_vis(uv_full, override_params=["fake"])
-    assert str(cm.value).startswith("Provided parameter fake is not a recognizable")
 
-    with pytest.raises(ValueError) as cm:
+@pytest.mark.filterwarnings("ignore:Telescope EVLA is not")
+@pytest.mark.filterwarnings("ignore:The uvw_array does not match the expected values")
+def test_sum_vis_errors(casa_uvfits):
+    uv_full = casa_uvfits
+    uv_half = uv_full.copy()
+    uv_half.data_array = uv_full.data_array / 2
+
+    uv_half2 = uv_half.copy()
+    uv_half2.use_future_array_shapes()
+    with pytest.raises(
+        ValueError,
+        match="Both objects must have the same `future_array_shapes` parameter.",
+    ):
+        uv_half.sum_vis(uv_half2)
+
+    with pytest.raises(
+        ValueError, match="Provided parameter fake is not a recognizable"
+    ):
+        uv_half.sum_vis(uv_half, override_params=["fake"])
+
+    with pytest.raises(
+        ValueError, match="Only UVData \\(or subclass\\) objects can be"
+    ):
         uv_full.sum_vis("foo")
-    assert str(cm.value).startswith("Only UVData (or subclass) objects can be")
 
     uv_full.instrument = "foo"
-    with pytest.raises(ValueError) as cm:
+    with pytest.raises(ValueError, match="UVParameter instrument does not match"):
         uv_full.sum_vis(uv_half, inplace=True)
-    assert str(cm.value).startswith("UVParameter instrument does not match")
 
 
 @pytest.mark.filterwarnings("ignore:Telescope EVLA is not")
@@ -5882,9 +5910,13 @@ def test_redundancy_finder_when_nblts_not_nbls_times_ntimes(casa_uvfits):
 
 @pytest.mark.filterwarnings("ignore:Telescope EVLA is not")
 @pytest.mark.filterwarnings("ignore:The uvw_array does not match the expected values")
-def test_overlapping_data_add(casa_uvfits, tmp_path):
+@pytest.mark.parametrize("future_shapes", [True, False])
+def test_overlapping_data_add(casa_uvfits, tmp_path, future_shapes):
     # read in test data
     uv = casa_uvfits
+
+    if future_shapes:
+        uv.use_future_array_shapes()
 
     # slice into four objects
     blts1 = np.arange(500)
@@ -5949,6 +5981,8 @@ def test_overlapping_data_add(casa_uvfits, tmp_path):
     uvfull = UVData()
     uvfull.read(np.array([uv1_out, uv2_out, uv3_out, uv4_out]))
     uvfull.reorder_blts()
+    if future_shapes:
+        uvfull.use_future_array_shapes()
     uv.reorder_blts()
     assert uvutils._check_histories(uvfull.history, uv.history + extra_history2)
     uvfull.history = uv.history  # make histories match
@@ -6496,9 +6530,14 @@ def test_downsample_in_time_partial_flags(hera_uvh5):
 @pytest.mark.filterwarnings("ignore:The xyz array in ENU_from_ECEF")
 @pytest.mark.filterwarnings("ignore:The enu array in ECEF_from_ENU")
 @pytest.mark.filterwarnings("ignore:The uvw_array does not match the expected values")
-def test_downsample_in_time_totally_flagged(hera_uvh5):
+@pytest.mark.parametrize("future_shapes", [True, False])
+def test_downsample_in_time_totally_flagged(hera_uvh5, future_shapes):
     """Test the downsample_in_time method with totally flagged integrations"""
     uv_object = hera_uvh5
+
+    if future_shapes:
+        uv_object.use_future_array_shapes()
+
     uv_object.phase_to_time(Time(uv_object.time_array[0], format="jd"))
     # reorder to make sure we get the right value later
     uv_object.reorder_blts(order="baseline", minor_order="time")
@@ -6518,7 +6557,10 @@ def test_downsample_in_time_totally_flagged(hera_uvh5):
     # data and nsample should have the same results as no flags but the output
     # should be flagged
     inds01 = uv_object.antpair2ind(0, 1)
-    uv_object.flag_array[inds01[:2], 0, 0, 0] = True
+    if future_shapes:
+        uv_object.flag_array[inds01[:2], 0, 0] = True
+    else:
+        uv_object.flag_array[inds01[:2], 0, 0, 0] = True
     uv_object2 = uv_object.copy()
 
     uv_object.downsample_in_time(
@@ -8127,92 +8169,126 @@ def test_frequency_average_flagging_partial_twostage(uvdata_data):
 
 @pytest.mark.filterwarnings("ignore:Telescope EVLA is not")
 @pytest.mark.filterwarnings("ignore:The uvw_array does not match the expected values")
-def test_frequency_average_summing_corr_mode(uvdata_data):
+@pytest.mark.parametrize("future_shapes", [True, False])
+def test_frequency_average_summing_corr_mode(uvdata_data, future_shapes):
     """Test averaging in frequency."""
     # check that there's no flagging
-    assert np.nonzero(uvdata_data.uv_object.flag_array)[0].size == 0
+    uvobj = uvdata_data.uv_object
 
-    uvdata_data.uv_object.frequency_average(2, summing_correlator_mode=True)
+    if future_shapes:
+        uvobj.use_future_array_shapes()
+    uvobj2 = uvobj.copy()
 
-    assert uvdata_data.uv_object.Nfreqs == (uvdata_data.uv_object2.Nfreqs / 2)
+    assert np.nonzero(uvobj.flag_array)[0].size == 0
 
-    # TODO: Spw axis to be collapsed in future release
-    expected_freqs = uvdata_data.uv_object2.freq_array.reshape(
-        1, int(uvdata_data.uv_object2.Nfreqs / 2), 2
-    ).mean(axis=2)
-    assert np.max(np.abs(uvdata_data.uv_object.freq_array - expected_freqs)) == 0
+    uvobj.frequency_average(2, summing_correlator_mode=True)
+
+    assert uvobj.Nfreqs == (uvobj2.Nfreqs / 2)
+
+    if future_shapes:
+        expected_freqs = uvobj2.freq_array.reshape(int(uvobj2.Nfreqs / 2), 2).mean(
+            axis=1
+        )
+    else:
+        expected_freqs = uvobj2.freq_array.reshape(1, int(uvobj2.Nfreqs / 2), 2).mean(
+            axis=2
+        )
+    assert np.max(np.abs(uvobj.freq_array - expected_freqs)) == 0
 
     # no flagging, so the following is true
-    expected_data = uvdata_data.uv_object2.get_data(0, 1, squeeze="none")
-    # TODO: Spw axis to be collapsed in future release
-    reshape_tuple = (
-        expected_data.shape[0],
-        1,
-        int(uvdata_data.uv_object2.Nfreqs / 2),
-        2,
-        uvdata_data.uv_object2.Npols,
-    )
-    expected_data = expected_data.reshape(reshape_tuple).sum(axis=3)
-    assert np.allclose(
-        uvdata_data.uv_object.get_data(0, 1, squeeze="none"), expected_data
-    )
+    expected_data = uvobj2.get_data(0, 1, squeeze="none")
+    if future_shapes:
+        reshape_tuple = (
+            expected_data.shape[0],
+            int(uvobj2.Nfreqs / 2),
+            2,
+            uvobj2.Npols,
+        )
+        expected_data = expected_data.reshape(reshape_tuple).sum(axis=2)
+    else:
+        reshape_tuple = (
+            expected_data.shape[0],
+            1,
+            int(uvobj2.Nfreqs / 2),
+            2,
+            uvobj2.Npols,
+        )
+        expected_data = expected_data.reshape(reshape_tuple).sum(axis=3)
+    assert np.allclose(uvobj.get_data(0, 1, squeeze="none"), expected_data)
 
-    assert np.nonzero(uvdata_data.uv_object.flag_array)[0].size == 0
-    assert not isinstance(uvdata_data.uv_object.data_array, np.ma.MaskedArray)
-    assert not isinstance(uvdata_data.uv_object.nsample_array, np.ma.MaskedArray)
+    assert np.nonzero(uvobj.flag_array)[0].size == 0
+    assert not isinstance(uvobj.data_array, np.ma.MaskedArray)
+    assert not isinstance(uvobj.nsample_array, np.ma.MaskedArray)
 
 
 @pytest.mark.filterwarnings("ignore:Telescope EVLA is not")
 @pytest.mark.filterwarnings("ignore:The uvw_array does not match the expected values")
-def test_frequency_average_propagate_flags(uvdata_data):
+@pytest.mark.parametrize("future_shapes", [True, False])
+def test_frequency_average_propagate_flags(uvdata_data, future_shapes):
     """
     Test averaging in frequency with flagging all of one and only one of
     another sample averaged, and propagating flags. Data should be identical,
     but flags should be slightly different compared to other test of the same
     name.
     """
+    uvobj = uvdata_data.uv_object
+
+    if future_shapes:
+        uvobj.use_future_array_shapes()
+    uvobj2 = uvobj.copy()
+
     # check that there's no flagging
-    assert np.nonzero(uvdata_data.uv_object.flag_array)[0].size == 0
+    assert np.nonzero(uvobj.flag_array)[0].size == 0
 
     # apply some flagging for testing
-    inds01 = uvdata_data.uv_object.antpair2ind(0, 1)
-    uvdata_data.uv_object.flag_array[inds01[0], :, 0:3, :] = True
-    assert (
-        np.nonzero(uvdata_data.uv_object.flag_array)[0].size
-        == uvdata_data.uv_object.Npols * 3
-    )
+    inds01 = uvobj.antpair2ind(0, 1)
+    if future_shapes:
+        uvobj.flag_array[inds01[0], 0:3, :] = True
+    else:
+        uvobj.flag_array[inds01[0], :, 0:3, :] = True
 
-    uvdata_data.uv_object.frequency_average(2, propagate_flags=True)
+    assert np.nonzero(uvobj.flag_array)[0].size == uvobj.Npols * 3
 
-    assert uvdata_data.uv_object.Nfreqs == (uvdata_data.uv_object2.Nfreqs / 2)
+    uvobj.frequency_average(2, propagate_flags=True)
 
-    # TODO: Spw axis to be collapsed in future release
-    expected_freqs = uvdata_data.uv_object2.freq_array.reshape(
-        1, int(uvdata_data.uv_object2.Nfreqs / 2), 2
-    ).mean(axis=2)
-    assert np.max(np.abs(uvdata_data.uv_object.freq_array - expected_freqs)) == 0
+    assert uvobj.Nfreqs == (uvobj2.Nfreqs / 2)
 
-    expected_data = uvdata_data.uv_object2.get_data(0, 1, squeeze="none")
-    # TODO: Spw axis to be collapsed in future release
-    reshape_tuple = (
-        expected_data.shape[0],
-        1,
-        int(uvdata_data.uv_object2.Nfreqs / 2),
-        2,
-        uvdata_data.uv_object2.Npols,
-    )
-    expected_data = expected_data.reshape(reshape_tuple).mean(axis=3)
+    if future_shapes:
+        expected_freqs = uvobj2.freq_array.reshape(int(uvobj2.Nfreqs / 2), 2).mean(
+            axis=1
+        )
+    else:
+        expected_freqs = uvobj2.freq_array.reshape(1, int(uvobj2.Nfreqs / 2), 2).mean(
+            axis=2
+        )
+    assert np.max(np.abs(uvobj.freq_array - expected_freqs)) == 0
 
-    expected_data[0, :, 1, :] = uvdata_data.uv_object2.data_array[inds01[0], :, 3, :]
+    expected_data = uvobj2.get_data(0, 1, squeeze="none")
+    if future_shapes:
+        reshape_tuple = (
+            expected_data.shape[0],
+            int(uvobj2.Nfreqs / 2),
+            2,
+            uvobj2.Npols,
+        )
+        expected_data = expected_data.reshape(reshape_tuple).mean(axis=2)
 
-    assert np.allclose(
-        uvdata_data.uv_object.get_data(0, 1, squeeze="none"), expected_data
-    )
+        expected_data[0, 1, :] = uvobj2.data_array[inds01[0], 3, :]
+    else:
+        reshape_tuple = (
+            expected_data.shape[0],
+            1,
+            int(uvobj2.Nfreqs / 2),
+            2,
+            uvobj2.Npols,
+        )
+        expected_data = expected_data.reshape(reshape_tuple).mean(axis=3)
+
+        expected_data[0, :, 1, :] = uvobj2.data_array[inds01[0], :, 3, :]
+
+    assert np.allclose(uvobj.get_data(0, 1, squeeze="none"), expected_data)
     # Twice as many flags should exist compared to test of previous name.
-    assert (
-        np.nonzero(uvdata_data.uv_object.flag_array)[0].size
-        == 2 * uvdata_data.uv_object.Npols
-    )
+    assert np.nonzero(uvobj.flag_array)[0].size == 2 * uvobj.Npols
 
 
 @pytest.mark.filterwarnings("ignore:The uvw_array does not match the expected values")
