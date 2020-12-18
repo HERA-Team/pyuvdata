@@ -1358,20 +1358,6 @@ class MWACorrFITS(UVData):
                         ],
                         flags,
                     )
-            # remove bad antennas or flag bad ants
-            if remove_flagged_ants:
-                good_ants = np.delete(self.antenna_numbers, flagged_ants)
-                self.select(antenna_nums=good_ants)
-            else:
-                # generage baseline flags for flagged ants
-                bad_ant_inds = np.nonzero(
-                    np.logical_or(
-                        np.in1d(self.ant_1_array, flagged_ants),
-                        np.in1d(self.ant_2_array, flagged_ants),
-                    )
-                )[0]
-                # TODO: Spw axis to be collapsed in future release
-                self.flag_array[bad_ant_inds, :, :, :] = True
 
             if flag_init:
                 self.flag_init(
@@ -1396,6 +1382,21 @@ class MWACorrFITS(UVData):
             # reorder pols calls check so must come after
             # lst thread is re-joined.
             self.reorder_pols()
+            # remove bad antennas or flag bad ants
+            # select must be called after lst thread is re-joined
+            if remove_flagged_ants:
+                good_ants = np.delete(self.antenna_numbers, flagged_ants)
+                self.select(antenna_nums=good_ants)
+            else:
+                # generage baseline flags for flagged ants
+                bad_ant_inds = np.nonzero(
+                    np.logical_or(
+                        np.in1d(self.ant_1_array, flagged_ants),
+                        np.in1d(self.ant_2_array, flagged_ants),
+                    )
+                )[0]
+                # TODO: Spw axis to be collapsed in future release
+                self.flag_array[bad_ant_inds, :, :, :] = True
 
         # phasing
         if phase_to_pointing_center:
