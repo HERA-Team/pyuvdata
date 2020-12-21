@@ -137,7 +137,6 @@ def van_vleck_autos(sighat_arr):
         guess = np.copy(sighat)
         inds = np.where(np.abs(sighat_vector(guess) - sighat) > 1e-10)[0]
         while len(inds) != 0:
-            print(len(inds))
             guess[inds] = guess[inds] - (
                 (sighat_vector(guess[inds]) - sighat[inds])
                 / sighat_vector_prime(guess[inds])
@@ -487,7 +486,6 @@ class MWACorrFITS(UVData):
         xy = np.where(self.polarization_array == -7)[0][0]
         yx = np.where(self.polarization_array == -8)[0][0]
         pols = np.array([yy, xx])
-        # pols = np.array([0, 3])
         # combine axes
         self.data_array = self.data_array.reshape(
             (self.Nbls, self.Nfreqs * self.Ntimes, self.Npols)
@@ -540,11 +538,11 @@ class MWACorrFITS(UVData):
         # get good crosses
         bad_ant_inds = np.nonzero(
             np.logical_or(
-                np.in1d(self.ant_1_array[0 : self.Nbls], flagged_ants),
-                np.in1d(self.ant_2_array[0 : self.Nbls], flagged_ants),
+                np.isin(self.ant_1_array[0 : self.Nbls], flagged_ants),
+                np.isin(self.ant_2_array[0 : self.Nbls], flagged_ants),
             )
         )[0]
-        crosses = np.delete(crosses, np.nonzero(np.in1d(crosses, bad_ant_inds))[0])
+        crosses = np.delete(crosses, np.nonzero(np.isin(crosses, bad_ant_inds))[0])
         # correct crosses
         if cheby_approx:
             history_add_string += " Used Van Vleck Chebychev approximation."
@@ -555,17 +553,6 @@ class MWACorrFITS(UVData):
                 sig_vec = np.load(f)
             rho_coeff = rho_coeff[:, :, np.array([1, 3, 5])]
             sigs = self.data_array.real[autos[:, np.newaxis], :, pols]
-            smol_inds = np.nonzero(
-                np.logical_and(sigs.flatten() != 0, sigs.flatten() <= 0.9)
-            )[0]
-            smol_ants = np.floor(smol_inds / (len(pols) * self.Ntimes * self.Nfreqs))
-            print("num smol autos: " + str(len(smol_ants)))
-            print("smol auto ants: " + str(np.unique(smol_ants)))
-            # look for big sigmas
-            big_inds = np.nonzero(sigs > 4.5)[0]
-            big_ants = np.floor(big_inds / (len(pols) * self.Ntimes * self.Nfreqs))
-            print("num big autos: " + str(len(big_ants)))
-            print("smol big ants: " + str(np.unique(big_ants)))
             # find sigmas within interpolation range
             in_inds = np.logical_and(sigs > 0.9, sigs <= 4.5)
             # get indices and distances for bilinear interpolation
@@ -1382,17 +1369,19 @@ class MWACorrFITS(UVData):
             # reorder pols calls check so must come after
             # lst thread is re-joined.
             self.reorder_pols()
-            # remove bad antennas or flag bad ants
-            # select must be called after lst thread is re-joined
-            if remove_flagged_ants:
-                good_ants = np.delete(self.antenna_numbers, flagged_ants)
-                self.select(antenna_nums=good_ants)
-            else:
+
+        # remove bad antennas or flag bad ants
+        # select must be called after lst thread is re-joined
+        if remove_flagged_ants:
+            good_ants = np.delete(self.antenna_numbers, flagged_ants)
+            self.select(antenna_nums=good_ants)
+        else:
+            if not self.metadata_only:
                 # generage baseline flags for flagged ants
                 bad_ant_inds = np.nonzero(
                     np.logical_or(
-                        np.in1d(self.ant_1_array, flagged_ants),
-                        np.in1d(self.ant_2_array, flagged_ants),
+                        np.isin(self.ant_1_array, flagged_ants),
+                        np.isin(self.ant_2_array, flagged_ants),
                     )
                 )[0]
                 # TODO: Spw axis to be collapsed in future release

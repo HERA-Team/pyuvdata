@@ -871,3 +871,51 @@ def test_van_vleck_interp(tmp_path):
             remove_coarse_band=False,
             remove_dig_gains=False,
         )
+
+
+@pytest.mark.filterwarnings("ignore:telescope_location is not set. ")
+@pytest.mark.filterwarnings("ignore:some coarse channel files were not submitted")
+def test_remove_flagged_ants(tmp_path):
+    """Test remove_flagged_ants."""
+    uv1 = UVData()
+    uv1.read(
+        filelist[8:10], remove_flagged_ants=True,
+    )
+    uv2 = UVData()
+    uv2.read(
+        filelist[8:10], remove_flagged_ants=False,
+    )
+    good_ants = np.delete(np.arange(128), 76)
+    uv2.select(antenna_nums=good_ants)
+
+    assert uv1 == uv2
+
+
+@pytest.mark.filterwarnings("ignore:telescope_location is not set. ")
+@pytest.mark.filterwarnings("ignore:some coarse channel files were not submitted")
+def test_small_sigs(tmp_path):
+    """Test flag_small_sig_ants."""
+    small_sigs = str(tmp_path / "small_sigs07_02.fits")
+    with fits.open(filelist[8]) as mini:
+        mini[1].data[0, 0] = 1000
+        mini.writeto(small_sigs)
+    uv1 = UVData()
+    uv1.read(
+        [small_sigs, filelist[9]], correct_van_vleck=True, flag_small_sig_ants=True,
+    )
+    messages = [
+        "values are being corrected with the van vleck integral",
+    ]
+    messages = messages * 8
+    messages.append("telescope_location is not set")
+    messages.append("some coarse channel files were not submitted")
+    uv2 = UVData()
+    with uvtest.check_warnings(UserWarning, messages):
+        uv2.read(
+            [small_sigs, filelist[9]],
+            correct_van_vleck=True,
+            flag_small_sig_ants=False,
+        )
+
+    assert "flagged by the Van Vleck" in uv1.history
+    assert uv2.Nants_data - uv1.Nants_data == 1
