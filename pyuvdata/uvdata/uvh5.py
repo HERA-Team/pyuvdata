@@ -126,7 +126,7 @@ def _write_complex_astype(data, dset, indices):
     dtype_out = dset.dtype
     # make doubly sure dtype is valid; should be unless user is pathological
     _check_uvh5_dtype(dtype_out)
-    if data.ndim == 3:
+    if len(dset.shape) == 3:
         # this is the future array shape
         with dset.astype(dtype_out):
             dset[indices[0], indices[1], indices[2], "r"] = data.real

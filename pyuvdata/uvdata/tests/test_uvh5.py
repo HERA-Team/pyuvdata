@@ -97,7 +97,10 @@ def initialize_with_zeros_ints(uvd, filename):
     uvd.initialize_uvh5_file(
         filename, clobber=True, data_write_dtype=uvh5._hera_corr_dtype
     )
-    data_shape = (uvd.Nblts, 1, uvd.Nfreqs, uvd.Npols)
+    if uvd.future_array_shapes:
+        data_shape = (uvd.Nblts, uvd.Nfreqs, uvd.Npols)
+    else:
+        data_shape = (uvd.Nblts, 1, uvd.Nfreqs, uvd.Npols)
     data = np.zeros(data_shape, dtype=np.complex64)
     flags = np.zeros(data_shape, dtype=np.bool)
     nsamples = np.zeros(data_shape, dtype=np.float32)
@@ -107,8 +110,12 @@ def initialize_with_zeros_ints(uvd, filename):
         flags_dset = dgrp["flags"]
         nsample_dset = dgrp["nsamples"]
         with data_dset.astype(uvh5._hera_corr_dtype):
-            data_dset[:, :, :, :, "r"] = data.real
-            data_dset[:, :, :, :, "i"] = data.imag
+            if uvd.future_array_shapes:
+                data_dset[:, :, :, "r"] = data.real
+                data_dset[:, :, :, "i"] = data.imag
+            else:
+                data_dset[:, :, :, :, "r"] = data.real
+                data_dset[:, :, :, :, "i"] = data.imag
         flags_dset = flags  # noqa
         nsample_dset = nsamples  # noqa
     return
@@ -2520,12 +2527,16 @@ def test_uvh5_partial_write_ints_irregular_pol(uv_uvh5, tmp_path):
     return
 
 
-def test_uvh5_partial_write_ints_irregular_multi1(uv_uvh5, tmp_path):
+@pytest.mark.parametrize("future_shapes", [True, False])
+def test_uvh5_partial_write_ints_irregular_multi1(uv_uvh5, future_shapes, tmp_path):
     """
     Test writing a uvh5 file using irregular interval for blt and freq and
     integer dtype.
     """
     full_uvh5 = uv_uvh5
+    if future_shapes:
+        full_uvh5.use_future_array_shapes()
+
     partial_uvh5 = full_uvh5.copy()
     partial_uvh5.data_array = None
     partial_uvh5.flag_array = None
@@ -2545,17 +2556,25 @@ def test_uvh5_partial_write_ints_irregular_multi1(uv_uvh5, tmp_path):
     # define blts and freqs
     blt_inds = [0, 1, 2, 7]
     freq_inds = [0, 2, 3, 4]
-    data_shape = (len(blt_inds), 1, len(freq_inds), full_uvh5.Npols)
+    if future_shapes:
+        data_shape = (len(blt_inds), len(freq_inds), full_uvh5.Npols)
+    else:
+        data_shape = (len(blt_inds), 1, len(freq_inds), full_uvh5.Npols)
     data = np.zeros(data_shape, dtype=np.complex64)
     flags = np.zeros(data_shape, dtype=np.bool)
     nsamples = np.zeros(data_shape, dtype=np.float32)
     for iblt, blt_idx in enumerate(blt_inds):
         for ifreq, freq_idx in enumerate(freq_inds):
-            data[iblt, :, ifreq, :] = full_uvh5.data_array[blt_idx, :, freq_idx, :]
-            flags[iblt, :, ifreq, :] = full_uvh5.flag_array[blt_idx, :, freq_idx, :]
-            nsamples[iblt, :, ifreq, :] = full_uvh5.nsample_array[
-                blt_idx, :, freq_idx, :
-            ]
+            if future_shapes:
+                data[iblt, ifreq, :] = full_uvh5.data_array[blt_idx, freq_idx, :]
+                flags[iblt, ifreq, :] = full_uvh5.flag_array[blt_idx, freq_idx, :]
+                nsamples[iblt, ifreq, :] = full_uvh5.nsample_array[blt_idx, freq_idx, :]
+            else:
+                data[iblt, :, ifreq, :] = full_uvh5.data_array[blt_idx, :, freq_idx, :]
+                flags[iblt, :, ifreq, :] = full_uvh5.flag_array[blt_idx, :, freq_idx, :]
+                nsamples[iblt, :, ifreq, :] = full_uvh5.nsample_array[
+                    blt_idx, :, freq_idx, :
+                ]
     with uvtest.check_warnings(
         UserWarning, "Selected frequencies are not evenly spaced",
     ):
@@ -2571,11 +2590,22 @@ def test_uvh5_partial_write_ints_irregular_multi1(uv_uvh5, tmp_path):
     # also write the arrays to the partial object
     for iblt, blt_idx in enumerate(blt_inds):
         for ifreq, freq_idx in enumerate(freq_inds):
-            partial_uvh5.data_array[blt_idx, :, freq_idx, :] = data[iblt, :, ifreq, :]
-            partial_uvh5.flag_array[blt_idx, :, freq_idx, :] = flags[iblt, :, ifreq, :]
-            partial_uvh5.nsample_array[blt_idx, :, freq_idx, :] = nsamples[
-                iblt, :, ifreq, :
-            ]
+            if future_shapes:
+                partial_uvh5.data_array[blt_idx, freq_idx, :] = data[iblt, ifreq, :]
+                partial_uvh5.flag_array[blt_idx, freq_idx, :] = flags[iblt, ifreq, :]
+                partial_uvh5.nsample_array[blt_idx, freq_idx, :] = nsamples[
+                    iblt, ifreq, :
+                ]
+            else:
+                partial_uvh5.data_array[blt_idx, :, freq_idx, :] = data[
+                    iblt, :, ifreq, :
+                ]
+                partial_uvh5.flag_array[blt_idx, :, freq_idx, :] = flags[
+                    iblt, :, ifreq, :
+                ]
+                partial_uvh5.nsample_array[blt_idx, :, freq_idx, :] = nsamples[
+                    iblt, :, ifreq, :
+                ]
 
     # read in the file and make sure it matches
     partial_uvh5_file = UVData()
@@ -2584,6 +2614,8 @@ def test_uvh5_partial_write_ints_irregular_multi1(uv_uvh5, tmp_path):
     # (not on the surface of the earth)
     # which breaks the phasing when trying to check if the uvws match the antpos.
     partial_uvh5_file.read(partial_testfile, run_check_acceptability=False)
+    if future_shapes:
+        partial_uvh5_file.use_future_array_shapes()
     assert partial_uvh5_file == partial_uvh5
 
     # clean up
@@ -2592,12 +2624,16 @@ def test_uvh5_partial_write_ints_irregular_multi1(uv_uvh5, tmp_path):
     return
 
 
-def test_uvh5_partial_write_ints_irregular_multi2(uv_uvh5, tmp_path):
+@pytest.mark.parametrize("future_shapes", [True, False])
+def test_uvh5_partial_write_ints_irregular_multi2(uv_uvh5, future_shapes, tmp_path):
     """
     Test writing a uvh5 file using irregular interval for freq and pol and
     integer dtype.
     """
     full_uvh5 = uv_uvh5
+    if future_shapes:
+        full_uvh5.use_future_array_shapes()
+
     partial_uvh5 = full_uvh5.copy()
     partial_uvh5.data_array = None
     partial_uvh5.flag_array = None
@@ -2617,17 +2653,25 @@ def test_uvh5_partial_write_ints_irregular_multi2(uv_uvh5, tmp_path):
     # define freqs and pols
     freq_inds = [0, 1, 2, 7]
     pol_inds = [0, 1, 3]
-    data_shape = (full_uvh5.Nblts, 1, len(freq_inds), len(pol_inds))
+    if future_shapes:
+        data_shape = (full_uvh5.Nblts, len(freq_inds), len(pol_inds))
+    else:
+        data_shape = (full_uvh5.Nblts, 1, len(freq_inds), len(pol_inds))
     data = np.zeros(data_shape, dtype=np.complex64)
     flags = np.zeros(data_shape, dtype=np.bool)
     nsamples = np.zeros(data_shape, dtype=np.float32)
     for ifreq, freq_idx in enumerate(freq_inds):
         for ipol, pol_idx in enumerate(pol_inds):
-            data[:, :, ifreq, ipol] = full_uvh5.data_array[:, :, freq_idx, pol_idx]
-            flags[:, :, ifreq, ipol] = full_uvh5.flag_array[:, :, freq_idx, pol_idx]
-            nsamples[:, :, ifreq, ipol] = full_uvh5.nsample_array[
-                :, :, freq_idx, pol_idx
-            ]
+            if future_shapes:
+                data[:, ifreq, ipol] = full_uvh5.data_array[:, freq_idx, pol_idx]
+                flags[:, ifreq, ipol] = full_uvh5.flag_array[:, freq_idx, pol_idx]
+                nsamples[:, ifreq, ipol] = full_uvh5.nsample_array[:, freq_idx, pol_idx]
+            else:
+                data[:, :, ifreq, ipol] = full_uvh5.data_array[:, :, freq_idx, pol_idx]
+                flags[:, :, ifreq, ipol] = full_uvh5.flag_array[:, :, freq_idx, pol_idx]
+                nsamples[:, :, ifreq, ipol] = full_uvh5.nsample_array[
+                    :, :, freq_idx, pol_idx
+                ]
     with uvtest.check_warnings(
         UserWarning,
         [
@@ -2647,11 +2691,22 @@ def test_uvh5_partial_write_ints_irregular_multi2(uv_uvh5, tmp_path):
     # also write the arrays to the partial object
     for ifreq, freq_idx in enumerate(freq_inds):
         for ipol, pol_idx in enumerate(pol_inds):
-            partial_uvh5.data_array[:, :, freq_idx, pol_idx] = data[:, :, ifreq, ipol]
-            partial_uvh5.flag_array[:, :, freq_idx, pol_idx] = flags[:, :, ifreq, ipol]
-            partial_uvh5.nsample_array[:, :, freq_idx, pol_idx] = nsamples[
-                :, :, ifreq, ipol
-            ]
+            if future_shapes:
+                partial_uvh5.data_array[:, freq_idx, pol_idx] = data[:, ifreq, ipol]
+                partial_uvh5.flag_array[:, freq_idx, pol_idx] = flags[:, ifreq, ipol]
+                partial_uvh5.nsample_array[:, freq_idx, pol_idx] = nsamples[
+                    :, ifreq, ipol
+                ]
+            else:
+                partial_uvh5.data_array[:, :, freq_idx, pol_idx] = data[
+                    :, :, ifreq, ipol
+                ]
+                partial_uvh5.flag_array[:, :, freq_idx, pol_idx] = flags[
+                    :, :, ifreq, ipol
+                ]
+                partial_uvh5.nsample_array[:, :, freq_idx, pol_idx] = nsamples[
+                    :, :, ifreq, ipol
+                ]
 
     # read in the file and make sure it matches
     partial_uvh5_file = UVData()
@@ -2660,6 +2715,8 @@ def test_uvh5_partial_write_ints_irregular_multi2(uv_uvh5, tmp_path):
     # (not on the surface of the earth)
     # which breaks the phasing when trying to check if the uvws match the antpos.
     partial_uvh5_file.read(partial_testfile, run_check_acceptability=False)
+    if future_shapes:
+        partial_uvh5_file.use_future_array_shapes()
     assert partial_uvh5_file == partial_uvh5
 
     # clean up
@@ -2668,11 +2725,15 @@ def test_uvh5_partial_write_ints_irregular_multi2(uv_uvh5, tmp_path):
     return
 
 
-def test_uvh5_partial_write_ints_irregular_multi3(uv_uvh5, tmp_path):
+@pytest.mark.parametrize("future_shapes", [True, False])
+def test_uvh5_partial_write_ints_irregular_multi3(uv_uvh5, future_shapes, tmp_path):
     """
     Test writing a uvh5 file using irregular interval for blt and pol and integer dtype.
     """
     full_uvh5 = uv_uvh5
+    if future_shapes:
+        full_uvh5.use_future_array_shapes()
+
     partial_uvh5 = full_uvh5.copy()
     partial_uvh5.data_array = None
     partial_uvh5.flag_array = None
@@ -2692,15 +2753,25 @@ def test_uvh5_partial_write_ints_irregular_multi3(uv_uvh5, tmp_path):
     # define blts and pols
     blt_inds = [0, 1, 2, 7]
     pol_inds = [0, 1, 3]
-    data_shape = (len(blt_inds), 1, full_uvh5.Nfreqs, len(pol_inds))
+    if future_shapes:
+        data_shape = (len(blt_inds), full_uvh5.Nfreqs, len(pol_inds))
+    else:
+        data_shape = (len(blt_inds), 1, full_uvh5.Nfreqs, len(pol_inds))
     data = np.zeros(data_shape, dtype=np.complex64)
     flags = np.zeros(data_shape, dtype=np.bool)
     nsamples = np.zeros(data_shape, dtype=np.float32)
     for iblt, blt_idx in enumerate(blt_inds):
         for ipol, pol_idx in enumerate(pol_inds):
-            data[iblt, :, :, ipol] = full_uvh5.data_array[blt_idx, :, :, pol_idx]
-            flags[iblt, :, :, ipol] = full_uvh5.flag_array[blt_idx, :, :, pol_idx]
-            nsamples[iblt, :, :, ipol] = full_uvh5.nsample_array[blt_idx, :, :, pol_idx]
+            if future_shapes:
+                data[iblt, :, ipol] = full_uvh5.data_array[blt_idx, :, pol_idx]
+                flags[iblt, :, ipol] = full_uvh5.flag_array[blt_idx, :, pol_idx]
+                nsamples[iblt, :, ipol] = full_uvh5.nsample_array[blt_idx, :, pol_idx]
+            else:
+                data[iblt, :, :, ipol] = full_uvh5.data_array[blt_idx, :, :, pol_idx]
+                flags[iblt, :, :, ipol] = full_uvh5.flag_array[blt_idx, :, :, pol_idx]
+                nsamples[iblt, :, :, ipol] = full_uvh5.nsample_array[
+                    blt_idx, :, :, pol_idx
+                ]
     with uvtest.check_warnings(
         UserWarning, "Selected polarization values are not evenly spaced",
     ):
@@ -2716,11 +2787,20 @@ def test_uvh5_partial_write_ints_irregular_multi3(uv_uvh5, tmp_path):
     # also write the arrays to the partial object
     for iblt, blt_idx in enumerate(blt_inds):
         for ipol, pol_idx in enumerate(pol_inds):
-            partial_uvh5.data_array[blt_idx, :, :, pol_idx] = data[iblt, :, :, ipol]
-            partial_uvh5.flag_array[blt_idx, :, :, pol_idx] = flags[iblt, :, :, ipol]
-            partial_uvh5.nsample_array[blt_idx, :, :, pol_idx] = nsamples[
-                iblt, :, :, ipol
-            ]
+            if future_shapes:
+                partial_uvh5.data_array[blt_idx, :, pol_idx] = data[iblt, :, ipol]
+                partial_uvh5.flag_array[blt_idx, :, pol_idx] = flags[iblt, :, ipol]
+                partial_uvh5.nsample_array[blt_idx, :, pol_idx] = nsamples[
+                    iblt, :, ipol
+                ]
+            else:
+                partial_uvh5.data_array[blt_idx, :, :, pol_idx] = data[iblt, :, :, ipol]
+                partial_uvh5.flag_array[blt_idx, :, :, pol_idx] = flags[
+                    iblt, :, :, ipol
+                ]
+                partial_uvh5.nsample_array[blt_idx, :, :, pol_idx] = nsamples[
+                    iblt, :, :, ipol
+                ]
 
     # read in the file and make sure it matches
     partial_uvh5_file = UVData()
@@ -2729,6 +2809,8 @@ def test_uvh5_partial_write_ints_irregular_multi3(uv_uvh5, tmp_path):
     # (not on the surface of the earth)
     # which breaks the phasing when trying to check if the uvws match the antpos.
     partial_uvh5_file.read(partial_testfile, run_check_acceptability=False)
+    if future_shapes:
+        partial_uvh5_file.use_future_array_shapes()
     assert partial_uvh5_file == partial_uvh5
 
     # clean up
@@ -2737,11 +2819,15 @@ def test_uvh5_partial_write_ints_irregular_multi3(uv_uvh5, tmp_path):
     return
 
 
-def test_uvh5_partial_write_ints_irregular_multi4(uv_uvh5, tmp_path):
+@pytest.mark.parametrize("future_shapes", [True, False])
+def test_uvh5_partial_write_ints_irregular_multi4(uv_uvh5, future_shapes, tmp_path):
     """
     Test writing a uvh5 file using irregular interval for all axes and integer dtype.
     """
     full_uvh5 = uv_uvh5
+    if future_shapes:
+        full_uvh5.use_future_array_shapes()
+
     partial_uvh5 = full_uvh5.copy()
     partial_uvh5.data_array = None
     partial_uvh5.flag_array = None
@@ -2762,22 +2848,36 @@ def test_uvh5_partial_write_ints_irregular_multi4(uv_uvh5, tmp_path):
     blt_inds = [0, 1, 2, 7]
     freq_inds = [0, 2, 3, 4]
     pol_inds = [0, 1, 3]
-    data_shape = (len(blt_inds), 1, len(freq_inds), len(pol_inds))
+    if future_shapes:
+        data_shape = (len(blt_inds), len(freq_inds), len(pol_inds))
+    else:
+        data_shape = (len(blt_inds), 1, len(freq_inds), len(pol_inds))
     data = np.zeros(data_shape, dtype=np.complex64)
     flags = np.zeros(data_shape, dtype=np.bool)
     nsamples = np.zeros(data_shape, dtype=np.float32)
     for iblt, blt_idx in enumerate(blt_inds):
         for ifreq, freq_idx in enumerate(freq_inds):
             for ipol, pol_idx in enumerate(pol_inds):
-                data[iblt, :, ifreq, ipol] = full_uvh5.data_array[
-                    blt_idx, :, freq_idx, pol_idx
-                ]
-                flags[iblt, :, ifreq, ipol] = full_uvh5.flag_array[
-                    blt_idx, :, freq_idx, pol_idx
-                ]
-                nsamples[iblt, :, ifreq, ipol] = full_uvh5.nsample_array[
-                    blt_idx, :, freq_idx, pol_idx
-                ]
+                if future_shapes:
+                    data[iblt, ifreq, ipol] = full_uvh5.data_array[
+                        blt_idx, freq_idx, pol_idx
+                    ]
+                    flags[iblt, ifreq, ipol] = full_uvh5.flag_array[
+                        blt_idx, freq_idx, pol_idx
+                    ]
+                    nsamples[iblt, ifreq, ipol] = full_uvh5.nsample_array[
+                        blt_idx, freq_idx, pol_idx
+                    ]
+                else:
+                    data[iblt, :, ifreq, ipol] = full_uvh5.data_array[
+                        blt_idx, :, freq_idx, pol_idx
+                    ]
+                    flags[iblt, :, ifreq, ipol] = full_uvh5.flag_array[
+                        blt_idx, :, freq_idx, pol_idx
+                    ]
+                    nsamples[iblt, :, ifreq, ipol] = full_uvh5.nsample_array[
+                        blt_idx, :, freq_idx, pol_idx
+                    ]
     with uvtest.check_warnings(
         UserWarning,
         [
@@ -2799,15 +2899,26 @@ def test_uvh5_partial_write_ints_irregular_multi4(uv_uvh5, tmp_path):
     for iblt, blt_idx in enumerate(blt_inds):
         for ifreq, freq_idx in enumerate(freq_inds):
             for ipol, pol_idx in enumerate(pol_inds):
-                partial_uvh5.data_array[blt_idx, :, freq_idx, pol_idx] = data[
-                    iblt, :, ifreq, ipol
-                ]
-                partial_uvh5.flag_array[blt_idx, :, freq_idx, pol_idx] = flags[
-                    iblt, :, ifreq, ipol
-                ]
-                partial_uvh5.nsample_array[blt_idx, :, freq_idx, pol_idx] = nsamples[
-                    iblt, :, ifreq, ipol
-                ]
+                if future_shapes:
+                    partial_uvh5.data_array[blt_idx, freq_idx, pol_idx] = data[
+                        iblt, ifreq, ipol
+                    ]
+                    partial_uvh5.flag_array[blt_idx, freq_idx, pol_idx] = flags[
+                        iblt, ifreq, ipol
+                    ]
+                    partial_uvh5.nsample_array[blt_idx, freq_idx, pol_idx] = nsamples[
+                        iblt, ifreq, ipol
+                    ]
+                else:
+                    partial_uvh5.data_array[blt_idx, :, freq_idx, pol_idx] = data[
+                        iblt, :, ifreq, ipol
+                    ]
+                    partial_uvh5.flag_array[blt_idx, :, freq_idx, pol_idx] = flags[
+                        iblt, :, ifreq, ipol
+                    ]
+                    partial_uvh5.nsample_array[
+                        blt_idx, :, freq_idx, pol_idx
+                    ] = nsamples[iblt, :, ifreq, ipol]
 
     # read in the file and make sure it matches
     partial_uvh5_file = UVData()
@@ -2816,6 +2927,8 @@ def test_uvh5_partial_write_ints_irregular_multi4(uv_uvh5, tmp_path):
     # (not on the surface of the earth)
     # which breaks the phasing when trying to check if the uvws match the antpos.
     partial_uvh5_file.read(partial_testfile, run_check_acceptability=False)
+    if future_shapes:
+        partial_uvh5_file.use_future_array_shapes()
     assert partial_uvh5_file == partial_uvh5
 
     # clean up
