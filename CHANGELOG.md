@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Added `use_future_array_shapes` method to allow users to convert to using the future
+array shapes now, with support throughout UVData methods and related utility functions.
+Also added `use_current_array_shapes` to revert to the standard shapes.
 - Added support for `extra_keywords` in UVFlag construction from UVData objects (and paths)
 
 ## [2.1.3] - 2020-12-15
