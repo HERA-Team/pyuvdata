@@ -694,6 +694,22 @@ class UVData(UVBase):
 
         return metadata_only
 
+    def _set_future_array_shapes(self):
+        """
+        Set future_array_shapes to True and adjust required parameters.
+
+        This method should not be called directly by users; instead it is called
+        by file-reading methods and `use_future_array_shapes` to indicate the
+        `future_array_shapes` is True and define expected parameter shapes.
+
+        """
+        self.future_array_shapes = True
+        self._freq_array.form = ("Nfreqs",)
+        self._channel_width.form = ("Nfreqs",)
+        if not self.metadata_only:
+            for param_name in self._data_params:
+                getattr(self, "_" + param_name).form = ("Nblts", "Nfreqs", "Npols")
+
     def use_future_array_shapes(self):
         """
         Change the array shapes of this object to match the planned future shapes.
@@ -701,18 +717,15 @@ class UVData(UVBase):
         This method sets allows users to convert to the planned array shapes changes
         before the changes go into effect. This method sets the `future_array_shapes`
         parameter on this object to True.
+
         """
-        self.future_array_shapes = True
-        for param_name in self._data_params:
-            getattr(self, "_" + param_name).form = ("Nblts", "Nfreqs", "Npols")
+        self._set_future_array_shapes()
         if not self.metadata_only:
             for param_name in self._data_params:
                 setattr(self, param_name, (getattr(self, param_name))[:, 0, :, :])
 
-        self._freq_array.form = ("Nfreqs",)
         self.freq_array = self.freq_array[0, :]
 
-        self._channel_width.form = ("Nfreqs",)
         self.channel_width = np.zeros(self.Nfreqs, dtype=np.float) + self.channel_width
 
     def use_current_array_shapes(self):
