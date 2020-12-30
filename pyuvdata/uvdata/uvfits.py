@@ -770,7 +770,6 @@ class UVFITS(UVData):
                 run_check_acceptability,
                 strict_uvw_antpos_check,
             )
-        hdu_list.close()
 
     def write_uvfits(
         self,
