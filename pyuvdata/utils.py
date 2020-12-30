@@ -13,7 +13,7 @@ from scipy.spatial.distance import pdist, squareform
 from astropy.time import Time
 from astropy.coordinates import Angle
 from astropy.utils import iers
-from astropy.coordinates import SkyCoord, EarthLocation, AltAz
+from astropy.coordinates import SkyCoord, EarthLocation, TETE
 import astropy.units as units
 from . import _utils
 
@@ -1039,6 +1039,70 @@ def unphase_uvw(ra, dec, uvw):
     ).T
 
 
+def rotate_matmul_wrapper(xyz_array, rot_matrix, n_rot):
+    """
+    Apply a rotation matrix to a series of vectors.
+
+    This is a simple convenience function which wraps numpy's matmul function for use
+    with various vector rotation functions in this module. This code could, in
+    principle, be replaced by a cythonized piece of code, although the matmul function
+    is _pretty_ well optimized already.
+
+    Parameters
+    ----------
+    xyz_array : ndarray of floats
+        Array of vectors to be rotated. May be of shape (3,), (3, n_vectors), or
+        (n_rot, 3, n_vectors).
+    rot_matrix : ndarray of floats
+        Series of rotation matricies to be applied to the stack of vectors. Must be
+        of shape (3, 3, n_rot).
+    n_rot : int
+        Number of individual rotation matricies to be applied.
+
+    Returns
+    -------
+    rotated_xyz : ndarray of floats
+        Array of vectors that have been rotated, of shape (n_rot, 3, n_vectors).
+    """
+    # Do a quick check to make sure that things look sensible
+    if n_rot != rot_matrix.shape[2]:
+        raise ValueError(
+            "n_rot must be equal to number of rotation matricies in rot_matrix."
+        )
+
+    # This is a special case where we allow the rotation axis to "expand" along the
+    # 0th axis of the rot_amount arrays. For xyz_array, if n_vectors = 1 but n_rot !=1,
+    # then it's a lot faster (by about 10x) to "switch it up" and swap the n_vector and
+    # n_rot axes, and then swap them back once everything else is done.
+    if n_rot == 1:
+        try:
+            if xyz_array.shape[2] == 1:
+                rotated_xyz = np.transpose(
+                    np.matmul(
+                        np.transpose(rot_matrix, axes=[2, 0, 1]),
+                        np.transpose(xyz_array, axes=[2, 1, 0]),
+                    ),
+                    axes=[2, 1, 0],
+                )
+                return rotated_xyz
+        except IndexError:
+            # If there is no third element of the xyz_array shape, then we can't use
+            # this particular trick. Move on to the "standard" method
+            pass
+
+    rotated_xyz = np.matmul(np.transpose(rot_matrix, axes=[2, 0, 1]), xyz_array)
+
+    # If we got fed a non rank-3 version of xyz_array, then we need to reshape
+    # rotated_xyz so that it outputs in the expected fashion -- we always want
+    # it to have ndim = 3, even if n_rot, n_vectors == 1.
+    if np.ndim(rotated_xyz) == 1:
+        rotated_xyz = rotated_xyz[np.newaxis, :, np.newaxis]
+    elif np.ndim(rotated_xyz) == 2:
+        rotated_xyz = rotated_xyz[:, :, np.newaxis]
+
+    return rotated_xyz
+
+
 def rotate_one_axis(xyz_array, rot_amount, rot_axis):
     """
     Rotate an array of 3D positions around the a single axis (x, y, or z).
@@ -1055,11 +1119,11 @@ def rotate_one_axis(xyz_array, rot_amount, rot_axis):
     ----------
     xyz_array : ndarray of float
         Set of 3-dimensional vectors be rotated, in typical right-handed cartesian
-        order, e.g. (x, y, z). Shape is (Nvectors, 3).
+        order, e.g. (x, y, z). Shape is (Nrot, 3, Nvectors).
     rot_amount : float or ndarray of float
         Amount (in radians) to rotate the given set of coordinates. Can either be a
         single float (or ndarray of shape (1,)) if rotating all vectors by the same
-        amount, otherwise expected to be shape (Nvectors,).
+        amount, otherwise expected to be shape (Nrot,).
     rot_axis : int
         Axis around which the rotation is applied. 0 is the x-axis, 1 is the y-axis,
         and 2 is the z-axis.
@@ -1067,8 +1131,17 @@ def rotate_one_axis(xyz_array, rot_amount, rot_axis):
     Returns
     -------
     rotated_xyz : ndarray of float
-        Set of rotated 3-dimensional vectors, shape (Nvector, 3).
+        Set of rotated 3-dimensional vectors, shape (Nrot, 3, Nvector).
     """
+    # If rot_amount is None, then this is just one big old no-op.
+    if rot_amount is None:
+        if np.ndim(xyz_array) == 1:
+            return xyz_array[np.newaxis, :, np.newaxis]
+        elif np.ndim(xyz_array) == 2:
+            return xyz_array[np.newaxis, :, :]
+        else:
+            return xyz_array
+
     # Check and see how big of a rotation matrix we need
     n_rot = 1 if (not isinstance(rot_amount, np.ndarray)) else (rot_amount.shape[0])
 
@@ -1090,14 +1163,7 @@ def rotate_one_axis(xyz_array, rot_amount, rot_axis):
     rot_matrix[temp_idx, temp_jdx] = np.sin(rot_amount, dtype=np.float64)
     rot_matrix[temp_jdx, temp_idx] = -rot_matrix[temp_idx, temp_jdx]
 
-    # This piece below could be potentially cythonized, although the numpy
-    # implementation of matrix multiplication is already _pretty_ well-optimized.
-    # On a quad-core 2.5 GHz Macbook, does about 10^7 vector rotations/sec.
-    rotated_xyz = np.matmul(
-        np.transpose(rot_matrix, [2, 0, 1]), xyz_array[:, :, np.newaxis]
-    )[:, :, 0]
-
-    return rotated_xyz
+    return rotate_matmul_wrapper(xyz_array, rot_matrix, n_rot)
 
 
 def rotate_two_axis(xyz_array, rot_amount1, rot_amount2, rot_axis1, rot_axis2):
@@ -1116,17 +1182,17 @@ def rotate_two_axis(xyz_array, rot_amount1, rot_amount2, rot_axis1, rot_axis2):
     ----------
     xyz_array : ndarray of float
         Set of 3-dimensional vectors be rotated, in typical right-handed cartesian
-        order, e.g. (x, y, z). Shape is (Nvectors, 3), or (3,) if Nvectors == 1.
+        order, e.g. (x, y, z). Shape is (Nrot, 3, Nvectors).
     rot_amount1 : float or ndarray of float
         Amount (in radians) of rotatation to apply during the first rotation of the
         sequence, to the given set of coordinates. Can either be a single float (or
         ndarray of shape (1,)) if rotating all vectors by the same amount, otherwise
-        expected to be shape (Nvectors,).
+        expected to be shape (Nrot,).
     rot_amount2 : float or ndarray of float
         Amount (in radians) of rotatation to apply during the second rotation of the
         sequence, to the given set of coordinates. Can either be a single float (or
         ndarray of shape (1,)) if rotating all vectors by the same amount, otherwise
-        expected to be shape (Nvectors,).
+        expected to be shape (Nrot,).
     rot_axis1 : int
         Axis around which the first rotation is applied. 0 is the x-axis, 1 is the
         y-axis, and 2 is the z-axis.
@@ -1137,12 +1203,21 @@ def rotate_two_axis(xyz_array, rot_amount1, rot_amount2, rot_axis1, rot_axis2):
     Returns
     -------
     rotated_xyz : ndarray of float
-        Set of rotated 3-dimensional vectors, shape (Nvector, 3).
+        Set of rotated 3-dimensional vectors, shape (Nrot, 3, Nvector).
 
     """
-    # Capture the case where someone wants to do a sequence of rotations on the same
-    # axis. Also known as just rotating a single axis.
-    if rot_axis1 == rot_axis2:
+    if rot_amount1 is None and rot_amount2 is None:
+        # If rot_amount is None, then this is just one big old no-op.
+        return xyz_array
+    elif (rot_amount1 is None) or np.all(rot_amount1 == 0.0):
+        # If rot_amount1 is None, then ignore it and just work w/ the 2nd rotation
+        return rotate_one_axis(xyz_array, rot_amount2, rot_axis2)
+    elif (rot_amount2 is None) or np.all(rot_amount2 == 0.0):
+        # If rot_amount2 is None, then ignore it and just work w/ the 1st rotation
+        return rotate_one_axis(xyz_array, rot_amount1, rot_axis1)
+    elif rot_axis1 == rot_axis2:
+        # Capture the case where someone wants to do a sequence of rotations on the same
+        # axis. Also known as just rotating a single axis.
         return rotate_one_axis(xyz_array, rot_amount1 + rot_amount2, rot_axis1)
 
     # Figure out how many individual rotation matricies we need, accounting for the
@@ -1206,19 +1281,13 @@ def rotate_two_axis(xyz_array, rot_amount1, rot_amount2, rot_axis1, rot_axis2):
         sin_lo * cos_hi * ((-1.0) ** (lhd_order))
     )
 
-    # This piece below could be potentially cythonized, although the numpy
-    # implementation of matrix multiplication is already _pretty_ well-optimized.
-    # On a quad-core 2.5 GHz Macbook, does about 10^7 vector rotations/sec.
-    rotated_xyz = np.matmul(
-        np.transpose(rot_matrix, [2, 0, 1]), xyz_array[:, :, np.newaxis]
-    )[:, :, 0]
-
-    return rotated_xyz
+    return rotate_matmul_wrapper(xyz_array, rot_matrix, n_rot)
 
 
 def calc_uvw(
     app_ra=None,
     app_dec=None,
+    app_pa=None,
     lst_array=None,
     use_ant_pos=True,
     uvw_array=None,
@@ -1228,8 +1297,9 @@ def calc_uvw(
     ant_2_array=None,
     old_app_ra=None,
     old_app_dec=None,
-    telescope_lon=None,
+    old_app_pa=None,
     telescope_lat=None,
+    telescope_lon=None,
     from_enu=False,
     to_enu=False,
 ):
@@ -1288,11 +1358,11 @@ def calc_uvw(
         in the pair for all baselines, used for selecting the relevant (zero-index)
         entries from antenna_positions, required if not providing uvw_array. Shape is
         (Nblts,).
-    telescope_lon : float
-        Longitude of the phase center, units radians, required if deriving baseline
-        coordinates from antenna positions, or converting to/from ENU coordinates.
     telescope_lat : float
         Latitude of the phase center, units radians, required if deriving baseline
+        coordinates from antenna positions, or converting to/from ENU coordinates.
+    telescope_lon : float
+        Longitude of the phase center, units radians, required if deriving baseline
         coordinates from antenna positions, or converting to/from ENU coordinates.
     from_enu : boolean
         Set to True if uvw_array is expressed in ENU coordinates. Default is False.
@@ -1369,34 +1439,36 @@ def calc_uvw(
             # advantage and spoof the gha and dec based on telescope lon and lat
             unique_gha = np.zeros(N_ants) - telescope_lon
             unique_dec = np.zeros_like(unique_gha) + telescope_lat
+            unique_pa = None
         else:
             unique_gha = np.repeat(
                 (lst_array[unique_mask] - app_ra[unique_mask]) - telescope_lon, N_ants
             )
             unique_dec = np.repeat(app_dec[unique_mask], N_ants)
+            unique_pa = np.repeat(app_pa[unique_mask], N_ants)
 
-        N_unique = len(unique_gha) // N_ants
+        # Tranpose the ant vectors so that they are in the proper shape
+        ant_vectors = np.transpose(antenna_positions)[np.newaxis, :, :]
+        # Apply rotations, and then reorganize the ndarray so that you can access
+        # individual antenna vectors quickly.
+        ant_rot_vectors = np.reshape(
+            np.transpose(
+                rotate_one_axis(
+                    rotate_two_axis(ant_vectors, unique_gha, unique_dec, 2, 1),
+                    unique_pa,
+                    0,
+                ),
+                axes=[0, 2, 1],
+            ),
+            (-1, 3),
+        )
 
-        # This is the last chance to bail on the "optimized" method -- if the number
-        # of calculations required to rotate all antennas is more than that required
-        # for rotating each of the individual baselines, then go the "direct" route.
-        # N_ants here is the number of rotations needed per unique triplet of RA, Dec,
-        # and GHA.
-        if N_unique > (len(unique_mask) / N_ants):
-            uvw_array = antenna_positions[ant_2_index] - antenna_positions[ant_1_index]
-            gha_array = (0.0 if to_enu else (lst_array - app_ra)) - telescope_lon
-            new_coords = rotate_two_axis(
-                uvw_array, gha_array, telescope_lat if to_enu else app_dec, 2, 1,
-            )
-        else:
-            ant_vectors = np.tile(antenna_positions, (N_unique, 1))
-            ant_rot_vectors = rotate_two_axis(ant_vectors, unique_gha, unique_dec, 2, 1)
-            unique_mask[0] = False
-            unique_map = np.cumsum(unique_mask) * N_ants
-            new_coords = (
-                ant_rot_vectors[unique_map + ant_2_index]
-                - ant_rot_vectors[unique_map + ant_1_index]
-            )
+        unique_mask[0] = False
+        unique_map = np.cumsum(unique_mask) * N_ants
+        new_coords = (
+            ant_rot_vectors[unique_map + ant_2_index]
+            - ant_rot_vectors[unique_map + ant_1_index]
+        )
     else:
         if from_enu:
             if to_enu:
@@ -1432,9 +1504,11 @@ def calc_uvw(
         # for convenience and code legibility -- a slightly different pair of
         # rotations would give you the same result w/o needing to cycle the axes.
         new_coords = rotate_two_axis(
-            rotate_one_axis(  # Yo dawg, I heard you like rotation maticies...
-                uvw_array[:, [2, 0, 1]],
+            rotate_two_axis(  # Yo dawg, I heard you like rotation maticies...
+                uvw_array[:, [2, 0, 1], np.newaxis],
+                0.0 if from_enu else (-old_app_pa),
                 (-telescope_lat) if from_enu else (-old_app_dec),
+                0,
                 1,
             ),
             gha_delta_array,
@@ -1442,76 +1516,15 @@ def calc_uvw(
             2,
             1,
         )
+        # One final rotation applied here, to compensate for the fact that we want the
+        # Dec-axis of our image (Fourier dual to the v-axis) to be aligned with the
+        # chosen frame
+        new_coords = np.transpose(rotate_one_axis(new_coords, app_pa, 0)[:, :, 0])
+
     # There's one last task to do, which is to re-align the axes from projected
     # XYZ -> uvw, where X (which points towards the source) falls on the w axis,
     # and Y and Z fall on the u and v axes, respectively.
     return new_coords[:, [1, 2, 0]]
-
-
-def calc_app_coords(
-    lon_coord,
-    lat_coord,
-    coord_frame,
-    coord_epoch=None,
-    object_type=None,
-    time_array=None,
-    lst_array=None,
-    pm_ra=None,
-    pm_dec=None,
-    rad_vel=None,
-    parallax=None,
-    telescope_lat=None,
-    telescope_lon=None,
-    telescope_alt=None,
-    use_novas=False,
-):
-    """
-    Calculate apparent coordinates for several different object types.
-
-    This is a function that does all sorts of interesting things, and I will write a
-    lot more about it shortly.
-    """
-    if object_type == "sidereal":
-        icrs_ra, icrs_dec = translate_sidereal_to_icrs(
-            lon_coord,
-            lat_coord,
-            coord_frame,
-            "icrs",
-            coord_epoch=coord_epoch
-            if (isinstance(coord_epoch, str) or isinstance(coord_epoch, Time))
-            else (None if coord_epoch is None else "J%f" % coord_epoch),
-            time_array=time_array,
-        )
-        app_ra, app_dec = translate_icrs_to_app(
-            time_array,
-            icrs_ra,
-            icrs_dec,
-            telescope_lon,
-            telescope_lat,
-            telescope_alt,
-            pm_ra=pm_ra,
-            pm_dec=pm_dec,
-            rad_vel=rad_vel,
-            parallax=parallax,
-            use_novas=use_novas,
-        )
-    elif object_type == "driftscan":
-        app_ra, app_dec = translate_driftscan_to_app(
-            lon_coord, lat_coord, telescope_lat, lst_array
-        )
-    elif object_type == "ephem":
-        app_ra, app_dec = translate_ephem_to_app()
-    elif object_type == "unphased":
-        # This is the easiest one - this is just supposed to be ENU, so set the
-        # apparent coords to the current lst and telescope_lon. Multiply by one
-        # to get a copy of the array rather than just a pointer
-        app_ra = lst_array.copy()
-        app_dec = np.zeros_like(app_ra) + telescope_lat
-    else:
-        raise ValueError("Object type %s is not recognized." % object_type)
-
-    return app_ra, app_dec
-
 
 def translate_driftscan_to_app(az_val, el_val, telescope_lat, lst_array):
     """
@@ -1554,8 +1567,14 @@ def translate_ephem_to_app():
     return None, None
 
 
-def translate_sidereal_to_icrs(
-    lon_coord, lat_coord, coord_frame, coord_epoch=None, time_array=None,
+def translate_sidereal_to_sidereal(
+    lon_coord,
+    lat_coord,
+    in_coord_frame,
+    out_coord_frame,
+    in_coord_epoch=None,
+    out_coord_epoch=None,
+    time_array=None,
 ):
     """
     Translate a given set of coordinates from a specified frame into ICRS.
@@ -1577,12 +1596,20 @@ def translate_sidereal_to_icrs(
         Latitudinal coordinate to be transformed, typically expressed as the
         declination, in units of radians. Can either be a float, or an ndarray of
         floats with shape (Ncoords,). Must agree with lon_coord.
-    coord_frame : string
+    in_coord_frame : string
         Reference frame for the provided coordinates.  Expected to match a list of
         those supported within the astropy SkyCoord object. An incomplete list includes
         'gcrs', 'fk4', 'fk5', 'galactic', 'supergalactic', 'cirs', and 'hcrs'.
-    coord_epoch : float
-        Epoch for the provided coordinate frame. Optional parameter, only required
+    out_coord_frame : string
+        Reference frame to output coordinates in. Expected to match a list of
+        those supported within the astropy SkyCoord object. An incomplete list includes
+        'gcrs', 'fk4', 'fk5', 'galactic', 'supergalactic', 'cirs', and 'hcrs'.
+    in_coord_epoch : float
+        Epoch for the input coordinate frame. Optional parameter, only required
+        when using either the FK4 (B1950) or FK5 (J2000) coordinate systems. Units are
+        in fractional years.
+    out_coord_epoch : float
+        Epoch for the output coordinate frame. Optional parameter, only required
         when using either the FK4 (B1950) or FK5 (J2000) coordinate systems. Units are
         in fractional years.
     time_array : float or ndarray of floats
@@ -1625,10 +1652,12 @@ def translate_sidereal_to_icrs(
         (np.repeat(lon_coord, len(time_array)) if rep_crds else lon_coord) * units.rad,
         (np.repeat(lat_coord, len(time_array)) if rep_crds else lat_coord) * units.rad,
         frame=in_coord_frame,
-        equinox=coord_epoch
-        if (isinstance(coord_epoch, str) or isinstance(coord_epoch, Time))
-        else (None if coord_epoch is None else "J%f" % coord_epoch),
-        obstime=Time(
+        equinox=in_coord_epoch
+        if (isinstance(in_coord_epoch, str) or isinstance(in_coord_epoch, Time))
+        else (None if in_coord_epoch is None else "J%f" % in_coord_epoch),
+        obstime=None
+        if time_array is None
+        else Time(
             np.repeat(time_array, len(lon_coord)) if rep_time else time_array,
             scale="utc",
             format="jd",
@@ -1643,8 +1672,8 @@ def translate_icrs_to_app(
     time_array,
     ra_coord,
     dec_coord,
-    telescope_lon,
     telescope_lat,
+    telescope_lon,
     telescope_alt,
     pm_ra=None,
     pm_dec=None,
@@ -1779,6 +1808,19 @@ def translate_icrs_to_app(
                 raise ValueError(
                     "rad_vel must be the same length as ra_coord and dec_coord!"
                 )
+
+    # Get IERS data, which is needed for both rotations
+    polar_motion_data = iers.earth_orientation_table.get()
+
+    pm_x_array, pm_y_array = polar_motion_data.pm_xy(time_array)
+    # Let's just make sure we have the right units here. This should be
+    # true unless astropy makes a change we are unaware of.
+    assert pm_x_array.unit == "arcsec"
+    assert pm_y_array.unit == "arcsec"
+
+    # Extract out just the value arrays, convert to rad
+    pm_x_array = pm_x_array.value * ((np.pi / 180.0) / 3600.0)
+    pm_y_array = pm_y_array.value * ((np.pi / 180.0) / 3600.0)
 
     if not use_novas:
         # Note that this implementation isn't perfect, but it does appear to agree
@@ -2189,68 +2231,6 @@ def calc_uvw(
     return new_coords[:, [1, 2, 0]]
 
 
-def calc_app_coords(
-    lon_coord,
-    lat_coord,
-    coord_frame,
-    coord_epoch=None,
-    object_type=None,
-    time_array=None,
-    lst_array=None,
-    pm_ra=None,
-    pm_dec=None,
-    rad_vel=None,
-    parallax=None,
-    telescope_lat=None,
-    telescope_lon=None,
-    telescope_alt=None,
-    use_astropy=False,
-):
-    """
-    Calculate apparent coordinates for several different object types.
-
-    This is a function that does all sorts of interesting things, and I will write a
-    lot more about it shortly.
-    """
-    if object_type == "sidereal":
-        icrs_ra, icrs_dec = translate_sidereal_to_icrs(
-            lon_coord,
-            lat_coord,
-            coord_frame,
-            coord_epoch=coord_epoch,
-            time_array=time_array,
-        )
-        app_ra, app_dec = translate_icrs_to_app(
-            time_array,
-            icrs_ra,
-            icrs_dec,
-            telescope_lon,
-            telescope_lat,
-            telescope_alt,
-            pm_ra=pm_ra,
-            pm_dec=pm_dec,
-            rad_vel=rad_vel,
-            parallax=parallax,
-            use_astropy=use_astropy,
-        )
-    elif object_type == "driftscan":
-        app_ra, app_dec = translate_driftscan_to_app(
-            lon_coord, lat_coord, telescope_lat, lst_array
-        )
-    elif object_type == "ephem":
-        app_ra, app_dec = translate_ephem_to_app()
-    elif object_type == "unphased":
-        # This is the easiest one - this is just supposed to be ENU, so set the
-        # apparent coords to the current lst and telescope_lon. Multiply by one
-        # to get a copy of the array rather than just a pointer
-        app_ra = lst_array.copy()
-        app_dec = np.zeros_like(app_ra) + telescope_lat
-    else:
-        raise ValueError("Object type %s is not recognized." % object_type)
-
-    return app_ra, app_dec
-
-
 def translate_driftscan_to_app(az_val, el_val, telescope_lat, lst_array):
     """
     Translate a fixed az-el pointing into apparent RA/Dec coordinates.
@@ -2529,37 +2509,31 @@ def translate_icrs_to_app(
             ra=ra_coord * units.rad, dec=dec_coord * units.rad, frame="icrs",
         )
 
-        alt_az_data = sou_info.transform_to(
-            AltAz(location=site_loc, obstime=time_obj_array)
+        app_coord_data = sou_info.transform_to(
+            TETE(location=site_loc, obstime=time_obj_array)
         )
-        az_vals = alt_az_data.az.value * (np.pi / 180.0)
-        el_vals = alt_az_data.alt.value * (np.pi / 180.0)
 
-        # Get coordinates to XYZ rel to ENU
-        xyz_vector = np.transpose(
+        # TETE doesn't seem to have polar wobble applied, which appears to be the only
+        # difference with NOVAS "topocentric". Let's fix that, shall we?
+        pos_vector = np.transpose(
             np.array(
                 [
-                    np.sin(az_vals) * np.cos(el_vals),
-                    np.cos(az_vals) * np.cos(el_vals),
-                    np.sin(el_vals),
+                    np.sin(app_coord_data.ra.rad) * np.cos(app_coord_data.dec.rad),
+                    np.cos(app_coord_data.ra.rad) * np.cos(app_coord_data.dec.rad),
+                    np.sin(app_coord_data.dec.rad),
                 ]
             )
-        )
+        )[:, :, np.newaxis]
 
-        # Re-project to HA/Dec
-        xyz_prime = rotate_one_axis(xyz_vector, (np.pi / 2.0) - telescope_lat, 0)
+        # Technically, this implementation isn't perfect, as you really would
+        # want to do a three rotations to do this "right", but the PM values
+        # are < 1 arcsec, and so usual small-angle approximations hold up well
+        # (where the resultant error is < 1 microarcsec).
+        pos_vector = rotate_two_axis(pos_vector, -pm_y_array, pm_x_array, 1, 0)
 
-        # Get the L(A)ST so that you can translate HA -> RA
-        lst_array = time_obj_array.sidereal_time(
-            "apparent", longitude=telescope_lon * units.rad
-        ).rad
-
-        # Do some fancy math, note the sign flip due to RA (increasing CCW) being
-        # reverse-oriented relative to azimuth (increasing CW).
-        app_ra = np.mod(
-            (lst_array + np.arctan2(xyz_prime[:, 0], -xyz_prime[:, 1])), 2.0 * np.pi
-        )
-        app_dec = np.arcsin(xyz_prime[:, 2])
+        # Convert the 3D vector back to RA/Dec values
+        app_ra = np.mod(np.arctan2(pos_vector[:, 0], pos_vector[:, 1]), 2.0 * np.pi,)
+        app_dec = np.arcsin(pos_vector[:, 2])
     else:
         # Import the NOVAS library only if it's needed/available.
         from novas import compat as novas
@@ -2568,25 +2542,6 @@ def translate_icrs_to_app(
         # Call is needed to load high-precision ephem data in NOVAS
         jd_start, jd_end, number = eph_manager.ephem_open()
 
-        # Get IERS data
-        polar_motion_data = iers.earth_orientation_table.get()
-
-        # Use interpolation to get the right values, set to zero (no corretion)
-        # when outside of the nominal range
-        pm_x_array = 1000.0 * np.interp(
-            time_array - 2400000.5,
-            polar_motion_data["MJD"].value,
-            polar_motion_data["PM_x"].value,
-            left=0.0,
-            right=0.0,
-        )
-        pm_y_array = 1000.0 * np.interp(
-            time_array - 2400000.5,
-            polar_motion_data["MJD"].value,
-            polar_motion_data["PM_y"].value,
-            left=0.0,
-            right=0.0,
-        )
         # Define the obs location, which is needed to calculate diurnal abb term
         # and polar wobble corrections
         site_loc = novas.make_on_surface(
@@ -2606,6 +2561,10 @@ def translate_icrs_to_app(
             pm_y_array = np.array([pm_y_array])
             tt_time_array = np.array([tt_time_array])
             ut1_time_array = np.array([ut1_time_array])
+
+        # NOVAS wants polar motion values in milliarcsec
+        pm_x_array *= 1000.0 / ((np.pi / 180.0) / 3600.0)
+        pm_y_array *= 1000.0 / ((np.pi / 180.0) / 3600.0)
 
         if np.any(tt_time_array < jd_start) or np.any(tt_time_array > jd_end):
             raise ValueError(
@@ -2659,6 +2618,171 @@ def translate_icrs_to_app(
         app_dec *= np.pi / 180.0
 
     return app_ra, app_dec
+
+
+def calc_app_coords(
+    lon_coord,
+    lat_coord,
+    coord_frame,
+    coord_epoch=None,
+    object_type=None,
+    ref_frame=None,
+    ref_epoch=None,
+    time_array=None,
+    lst_array=None,
+    pm_ra=None,
+    pm_dec=None,
+    rad_vel=None,
+    parallax=None,
+    telescope_lat=None,
+    telescope_lon=None,
+    telescope_alt=None,
+    use_novas=False,
+):
+    """
+    Calculate apparent coordinates for several different object types.
+
+    This is a function that does all sorts of interesting things, and I will write a
+    lot more about it shortly.
+    """
+    icrs_ra = icrs_dec = None
+    unique_time_array = np.unique(time_array)
+    if object_type == "sidereal":
+        icrs_ra, icrs_dec = translate_sidereal_to_sidereal(
+            lon_coord,
+            lat_coord,
+            coord_frame,
+            "icrs",
+            in_coord_epoch=coord_epoch
+            if (isinstance(coord_epoch, str) or isinstance(coord_epoch, Time))
+            else (None if coord_epoch is None else "J%f" % coord_epoch),
+            time_array=unique_time_array,
+        )
+        unique_app_ra, unique_app_dec = translate_icrs_to_app(
+            unique_time_array,
+            icrs_ra,
+            icrs_dec,
+            telescope_lat,
+            telescope_lon,
+            telescope_alt,
+            pm_ra=pm_ra,
+            pm_dec=pm_dec,
+            rad_vel=rad_vel,
+            parallax=parallax,
+            use_novas=use_novas,
+        )
+
+    elif object_type == "driftscan":
+        unique_app_ra, unique_app_dec = translate_driftscan_to_app(
+            lon_coord, lat_coord, telescope_lat, lst_array
+        )
+    elif object_type == "ephem":
+        unique_app_ra, unique_app_dec = translate_ephem_to_app()
+    elif object_type == "unphased":
+        # This is the easiest one - this is just supposed to be ENU, so set the
+        # apparent coords to the current lst and telescope_lon. Multiply by one
+        # to get a copy of the array rather than just a pointer
+        unique_app_ra = lst_array.copy()
+        unique_app_dec = np.zeros_like(unique_app_ra) + telescope_lat
+    else:
+        raise ValueError("Object type %s is not recognized." % object_type)
+
+    # If we aren't asking for a reference frame, then we assume that the coord
+    # system is all being handled in apparent coordinates. No fuss, no muss!
+    if (ref_frame is None) or (icrs_ra is None) or (icrs_dec is None):
+        unique_app_pa = np.zeros_like(unique_app_ra)
+    else:
+        # At this point, we assume that we have calclulated the source position in the
+        # icrs coordinate frame, and so we'll work from there
+        frame_ra, frame_dec = translate_sidereal_to_sidereal(
+            icrs_ra,
+            icrs_dec,
+            "icrs",
+            coord_frame,
+            out_coord_epoch=coord_epoch
+            if (isinstance(coord_epoch, str) or isinstance(coord_epoch, Time))
+            else (None if coord_epoch is None else "J%f" % coord_epoch),
+            time_array=unique_time_array,
+        )
+
+        # Offset north/south positions by 1 deg
+        up_dec = frame_dec + (np.pi / 180.0)
+        dn_dec = frame_dec - (np.pi / 180.0)
+        up_ra = dn_ra = frame_ra
+
+        # Wrap the positions if they happen to go over the poles
+        up_ra[up_dec > (np.pi / 2.0)] = np.mod(
+            up_ra[up_dec > (np.pi / 2.0)] + np.pi, 2.0 * np.pi
+        )
+        up_dec[up_dec > (np.pi / 2.0)] = np.pi - up_dec[up_dec > (np.pi / 2.0)]
+
+        dn_ra[-dn_dec > (np.pi / 2.0)] = np.mod(
+            dn_ra[dn_dec > (np.pi / 2.0)] + np.pi, 2.0 * np.pi
+        )
+        dn_dec[-dn_dec > (np.pi / 2.0)] = np.pi - dn_dec[-dn_dec > (np.pi / 2.0)]
+
+        up_icrs_ra, up_icrs_dec = translate_sidereal_to_sidereal(
+            up_ra,
+            up_dec,
+            coord_frame,
+            "icrs",
+            in_coord_epoch=coord_epoch
+            if (isinstance(coord_epoch, str) or isinstance(coord_epoch, Time))
+            else (None if coord_epoch is None else "J%f" % coord_epoch),
+            time_array=unique_time_array,
+        )
+
+        dn_icrs_ra, dn_icrs_dec = translate_sidereal_to_sidereal(
+            dn_ra,
+            dn_dec,
+            coord_frame,
+            "icrs",
+            in_coord_epoch=coord_epoch
+            if (isinstance(coord_epoch, str) or isinstance(coord_epoch, Time))
+            else (None if coord_epoch is None else "J%f" % coord_epoch),
+            time_array=unique_time_array,
+        )
+
+        app_up_ra, app_up_dec = translate_icrs_to_app(
+            unique_time_array,
+            up_icrs_ra,
+            up_icrs_dec,
+            telescope_lat,
+            telescope_lon,
+            telescope_alt,
+            use_novas=use_novas,
+        )
+
+        app_dn_ra, app_dn_dec = translate_icrs_to_app(
+            unique_time_array,
+            dn_icrs_ra,
+            dn_icrs_dec,
+            telescope_lat,
+            telescope_lon,
+            telescope_alt,
+            use_novas=use_novas,
+        )
+
+        # We have a negative sign here because the PA is between requested ->
+        # apparent frames, when we want apparent -> requested
+        unique_app_pa = -np.arctan2(
+            np.sin(app_dn_ra - app_up_ra),
+            (np.cos(app_dn_dec) * np.tan(app_up_dec))
+            - (np.sin(app_dn_dec) * np.cos(app_up_ra - app_dn_ra)),
+        )
+
+    # Now that we've calculated all the unique values, time to backfill through the
+    # "redundant" entries in the Nblt axis.
+    app_ra = np.zeros_like(time_array)
+    app_dec = np.zeros_like(time_array)
+    app_pa = np.zeros_like(time_array)
+    for idx, unique_time in enumerate(unique_time_array):
+        select_mask = time_array == unique_time
+        app_ra[select_mask] = unique_app_ra[idx]
+        app_dec[select_mask] = unique_app_dec[idx]
+        app_pa[select_mask] = unique_app_pa[idx]
+
+    return app_ra, app_dec, app_pa
 
 
 def get_lst_for_time(jd_array, latitude, longitude, altitude, use_novas=False):
