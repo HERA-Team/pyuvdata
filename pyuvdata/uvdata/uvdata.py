@@ -434,6 +434,22 @@ class UVData(UVBase):
         )
 
         desc = (
+            'Required if phase_type = "phased". Position angle between the hour '
+            "circle (which is a great circle that goes through the target postion and "
+            "both poles) in the apparent/topocentric frame, and the frame given in "
+            "the phase_center_frame attribute."
+            "Shape (Nblts,), type = float."
+        )
+        self._phase_center_app_pa = uvp.AngleParameter(
+            "phase_center_app_pa",
+            required=False,
+            form=("Nblts",),
+            expected_type=np.float,
+            description=desc,
+            tols=radian_tol,
+        )
+
+        desc = (
             'Only relevant if phase_type = "phased". Specifies the frame the'
             ' data and uvw_array are phased to. Options are "gcrs" and "icrs",'
             ' default is "icrs"'
@@ -687,6 +703,12 @@ class UVData(UVBase):
         self._object_dict.required = True
         self._object_name.form = ("Nobjects",)
 
+        # This should technically be required for any phased data set, but for now,
+        # we are only gonna make it mandatory for multi-obj data sets.
+        self._phase_center_app_ra.required = True
+        self._phase_center_app_dec.required = True
+        self._phase_center_app_pa.required = True
+
         if preserve_source_info:
             if self.phase_type == "phased":
                 # "Phased" objects in the parlance of multi-object is a "sidereal"
@@ -753,7 +775,7 @@ class UVData(UVBase):
         catalog, contained within the attribute object_dict.
         """
         # Check whether we should actually be doing this in the first place
-        if not self.mutli_source:
+        if not self.multi_object:
             raise TypeError("Cannot add a source if multi_object != True!")
 
         # Object names serve as dict keys, so we need to make sure that they're unique
@@ -1196,6 +1218,7 @@ class UVData(UVBase):
         if self.multi_object:
             app_ra = np.zeros(self.Nblts, dtype=np.float)
             app_dec = np.zeros(self.Nblts, dtype=np.float)
+            app_pa = np.zeros(self.Nblts, dtype=np.float)
             for idx in np.unique(self.object_id_array):
                 if (idx < 0) or (idx > len(self.object_name)):
                     raise IndexError(
@@ -1215,11 +1238,16 @@ class UVData(UVBase):
                 pm_dec = temp_dict["pm_dec"] if "pm_dec" in temp_keys else None
                 rad_vel = temp_dict["rad_vel"] if "rad_vel" in temp_keys else None
                 parallax = temp_dict["parallax"] if "parallax" in temp_keys else None
-                app_ra[select_mask], app_dec[select_mask] = uvutils.calc_app_coords(
+                (
+                    app_ra[select_mask],
+                    app_dec[select_mask],
+                    app_pa[select_mask],
+                ) = uvutils.calc_app_coords(
                     lon_val,
                     lat_val,
                     frame,
                     coord_epoch=epoch,
+                    ref_frame=self.phase_center_frame,
                     pm_ra=pm_ra,
                     pm_dec=pm_dec,
                     rad_vel=rad_vel,
@@ -1235,11 +1263,12 @@ class UVData(UVBase):
         else:
             # So this is actually the easier of the two cases -- just use the object
             # properties to fill in the relevant data
-            app_ra, app_dec = uvutils.calc_app_coords(
+            app_ra, app_dec, app_pa = uvutils.calc_app_coords(
                 self.phase_center_ra,
                 self.phase_center_dec,
                 self.phase_center_frame,
                 coord_epoch=self.phase_center_epoch,
+                ref_frame=self.phase_center_frame,
                 time_array=self.time_array,
                 lst_array=self.lst_array,
                 telescope_lat=self.telescope_location_lat_lon_alt[0],
@@ -1250,6 +1279,7 @@ class UVData(UVBase):
             )
         self.phase_center_app_ra = app_ra
         self.phase_center_app_dec = app_dec
+        self.phase_center_app_pa = app_pa
 
     def set_lsts_from_time_array(self, background=False, use_novas=False):
         """Set the lst_array based from the time_array.
@@ -1409,7 +1439,6 @@ class UVData(UVBase):
         run_check_acceptability=True,
         check_freq_spacing=False,
         strict_uvw_antpos_check=False,
-        use_novas=False,
     ):
         """
         Add some extra checks on top of checks on UVBase class.
@@ -1513,9 +1542,7 @@ class UVData(UVBase):
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 temp_obj.set_uvws_from_antenna_positions(
-                    allow_phasing=True,
-                    output_phase_frame=output_phase_frame,
-                    use_novas=use_novas,
+                    allow_phasing=True, output_phase_frame=output_phase_frame,
                 )
 
             if not np.allclose(temp_obj.uvw_array, self.uvw_array, atol=1):
@@ -2734,6 +2761,8 @@ class UVData(UVBase):
             self.phase_center_app_ra = self.phase_center_app_ra[index_array]
         if self.phase_center_app_dec is not None:
             self.phase_center_app_dec = self.phase_center_app_dec[index_array]
+        if self.phase_center_app_pa is not None:
+            self.phase_center_app_pa = self.phase_center_app_pa[index_array]
         if self.multi_object:
             self.object_id_array = self.object_id_array[index_array]
 
@@ -2811,11 +2840,7 @@ class UVData(UVBase):
         return
 
     def unphase_to_drift(
-        self,
-        phase_frame=None,
-        use_ant_pos=False,
-        use_old_phase=None,
-        auto_select_phase=True,
+        self, phase_frame=None, use_ant_pos=False, use_old_proj=None,
     ):
         """
         Convert from a phased dataset to a drift dataset.
@@ -2832,30 +2857,21 @@ class UVData(UVBase):
         use_ant_pos : bool
             If True, calculate the uvws directly from the antenna positions
             rather than from the existing uvws.
-        use_old_phase : bool
-            If True, uses the 'old' way of calculating phases. Default is False.
-        auto_select_phase : bool
-            Allow the phase method to determine whether or not use the old phasing
-            method or not. Default is True, overrides the input to use_old_phase.
+        use_old_proj : bool
+            If True, uses the 'old' way of calculating baseline projections. Default is
+            False, unless the attributes phase_center_app_ra or phase_center_app_dec are
+            None, in which case use_old_proj is forced to be True.
 
         Raises
         ------
         ValueError
             If the phase_type is not 'phased'
         """
-        # Basically, the only time we need to use the 'old' phase method is if we are
-        # working with a 'phased' data set, where the apparent coordinates have not
-        # been calculated.
-        if auto_select_phase and (use_old_phase is None):
-            use_old_phase = (self.phase_type == "phased") and (
-                self.phase_center_app_ra is None or self.phase_center_app_dec is None
-            )
-
         if self.phase_type == "phased":
             pass
         elif self.phase_type == "drift":
             raise ValueError(
-                "The data is already drift scanning; can only " "unphase phased data."
+                "The data is already drift scanning; can only unphase phased data."
             )
         else:
             raise ValueError(
@@ -2864,7 +2880,10 @@ class UVData(UVBase):
                 "reflect the phasing status of the data"
             )
 
-        if not use_old_phase:
+        if not use_old_proj and (
+            (self.phase_center_app_ra is not None)
+            and (self.phase_center_app_dec is not None)
+        ):
             # Check to make sure that these attributes are actually filled. Otherwise,
             # you probably want to use the old phase method.
             if (self.phase_center_app_ra is None) or (
@@ -2894,6 +2913,7 @@ class UVData(UVBase):
                 ant_2_array=self.ant_2_array,
                 old_app_ra=self.phase_center_app_ra,
                 old_app_dec=self.phase_center_app_dec,
+                old_app_pa=self.phase_center_app_pa,
                 telescope_lat=telescope_location[0],
                 telescope_lon=telescope_location[1],
                 to_enu=True,
@@ -2906,7 +2926,10 @@ class UVData(UVBase):
             if self.multi_object:
                 self.object_id_array[:] = self._add_object("unphased", "unphased")
                 self.phase_center_app_ra = self.lst_array.copy()
-                self.phaes_center_app_dec[:] = self.telescope_location[0]
+                self.phase_center_app_dec[:] = (
+                    np.zeros(self.Nblts) + self.telescope_location[0]
+                )
+                self.phase_center_app_pa = np.zeros(self.Nblts)
             else:
                 self.phase_center_frame = None
                 self.phase_center_ra = None
@@ -2914,25 +2937,30 @@ class UVData(UVBase):
                 self.phase_center_epoch = None
                 self.phase_center_app_ra = None
                 self.phase_center_app_dec = None
+                self.phase_center_app_pa = None
                 self._set_drift()
             return
+
+        if not use_old_proj and (
+            (self.phase_center_app_ra is not None)
+            and (self.phase_center_app_dec is not None)
+        ):
+            warnings.warn(
+                "When calling unphase_to_drift, use_old_proj was not set to True, but "
+                "the attributes phase_center_app_ra and/or phase_center_app_ra are set "
+                "to None - a characteristic of the 'old' projection method. Defaulting "
+                "to the 'old' method for unphasing now.",
+                UserWarning,
+            )
 
         # If you are a multi-object data set, there's no valid reason to be going
         # back to the old phase method. Time to bail!
         if self.multi_object:
             raise NotImplementedError(
                 "Multi-object data sets are not compatible with the old phasing "
-                "method, please set use_old_phase=False."
+                "method, please set use_old_proj=False."
             )
 
-        warnings.warn(
-            "The original `phase` method will be deprecated in a future release. "
-            "Note that the old and new phase methods are NOT compatible with one "
-            "another, so if you have phased using the old method, you should use "
-            "the unphase_to_drift method with use_old_phase=True to undo the old "
-            "corrections before using the new version of the phase method.",
-            DeprecationWarning,
-        )
         if phase_frame is None:
             if self.phase_center_frame is not None:
                 phase_frame = self.phase_center_frame
@@ -3067,11 +3095,11 @@ class UVData(UVBase):
         use_ant_pos=False,  # Can we change this to default to True?
         allow_rephase=True,
         orig_phase_frame=None,
-        use_novas=False,
-        use_old_phase=None,
-        auto_select_phase=True,
         select_mask=None,
         cleanup_old_sources=True,
+        use_novas=False,
+        use_old_proj=False,
+        fix_old_proj=True,
     ):
         """
         Phase a drift scan dataset to a single ra/dec at a particular epoch.
@@ -3109,54 +3137,37 @@ class UVData(UVBase):
             the phase_center_ra/dec of the object does not match `ra` and `dec`.
             Defaults to using the 'phase_center_frame' attribute or 'icrs' if
             that attribute is None.
-        use_novas : bool
-            If True, use the python-novas module for handling calculation of source
-            position coordinates. Default is False, which instead invokes the
-            astropy library.
-        use_old_phase : bool
-            If True, use the "old" method for calculating baseline uvw-coordinates,
-            which involved using astropy to move antenna positions (in ITRF) into
-            the requested reference frame (either GCRS or ICRS). Default is False.
-        auto_select_phase : bool
-            Allow the phase method to determine whether or not use the old phasing
-            method or not. Default is True, overrides the input to use_old_phase.
         select_mask : ndarray of bool
             Optional mask for selecting which data to operate on along the blt-axis,
             only used if with multi-object data sets (i.e., multi_object=True). Shape
             is (Nblts,).
+        use_novas : bool
+            If True, use the python-novas module for handling calculation of source
+            position coordinates. Default is False, which instead invokes the
+            astropy library.
+        use_old_proj : bool
+            If True, use the "old" method for calculating baseline uvw-coordinates,
+            which involved using astropy to move antenna positions (in ITRF) into
+            the requested reference frame (either GCRS or ICRS). Default is False.
+        fix_old_proj : bool
+            If True, the method will convert a data set with coordinates calculated
+            using the "old" method, correct them, and then produce new coordinates
+            using the "new" method.
 
         Raises
         ------
         ValueError
             If the phase_type is 'phased' and allow_rephase is False
         """
-        # Basically, the only time we need to use the 'old' phase method is if we are
-        # working with a 'phased' data set, where the apparent coordinates have not
-        # been calculated.
-        if auto_select_phase and (use_old_phase is None):
-            use_old_phase = (self.phase_type == "phased") and (
-                self.phase_center_app_ra is None or self.phase_center_app_dec is None
-            )
-        # If the selection mask is being used, make sure that it looks okay
-        if select_mask is not None:
-            if use_old_phase:
-                raise ValueError(
-                    "Cannot use the selection mask with the old phasing method. "
-                    "Either remove the selection_mask argument, or set "
-                    "use_old_phase=False to continue."
-                )
-            if not self.multi_object:
+        # Non multi-object datasets don't (yet) have a way of recording the 'extra'
+        # source properties, or selection mask, so make sure that these aren't using
+        # any of those if looking at a single object.
+        if not self.multi_object:
+            if select_mask is not None:
                 raise ValueError(
                     "Cannot apply a selection mask if multi_object=False. "
                     "Remove the select_mask argument to continue."
                 )
-            if not len(select_mask) != self.Nblts:
-                raise IndexError("Selection mask must be of length Nblts.")
-
-        # Non multi-object datasets don't (yet) have a way of recording the 'extra'
-        # source properties, so make sure that these aren't using any of those
-        # if looking at a single object.
-        if not self.multi_object:
             if pm_ra not in [0, None]:
                 raise ValueError(
                     "Non-zero values of pm_ra not supported when multi_object!=True."
@@ -3181,8 +3192,8 @@ class UVData(UVBase):
         # Right up front, we're gonna split off the piece of the code that
         # does the phasing using the "new" method, since its a lot more flexible
         # and because I think at some point, everything outside of this loop
-        # can be depreciated
-        if not use_old_phase:
+        # can be deprecated
+        if not use_old_proj:
             # Grab all the meta-data we need for the rotations
             telescope_location = self.telescope_location_lat_lon_alt
             time_array = self.time_array
@@ -3204,25 +3215,39 @@ class UVData(UVBase):
                         "The data is already phased; set allow_rephase"
                         " to True to unphase and rephase."
                     )
-                if (self.phase_center_app_ra is None) or (
-                    self.phase_center_app_dec is None
+                if (
+                    (self.phase_center_app_ra is None)
+                    or (self.phase_center_app_dec is None)
+                    and not use_ant_pos
                 ):
-                    raise AttributeError(
-                        "Object missing phase_center_ra_app or phase_center_dec_app, "
-                        "which implies that the data were phased using the 'old' "
-                        "method for phasing (which is not compatible with the new "
-                        "version of the code). Please run unphase_to_drift with "
-                        "use_old_phase=True to use the new method, otherwise call "
-                        "phase with use_old_phase=True to continue."
-                    )
-                old_w_vals = self.uvw_array[:, 2].copy()
-                old_app_ra = self.phase_center_app_ra
-                old_app_dec = self.phase_center_app_dec
-                from_enu = False
-                if self.multi_object:
-                    # Check and see if we have any unphased objects, in which case
-                    # their w-values should be zeroed out.
-                    old_w_vals[self._check_for_unphased_objects] = 0.0
+                    if fix_old_proj:
+                        # So to fix the 'old' projection, we use the unphase_to_drift
+                        # method with the 'old' projection to bring the data set back
+                        # to ENU, and then we can move from there. Of course, none of
+                        # this is actually neccessary if calculating the coordinates
+                        # from antenna positions, so you do you, puvudataset.
+                        self.unphase_to_drift(
+                            phase_frame=orig_phase_frame, use_old_proj=True,
+                        )
+                    else:
+                        raise AttributeError(
+                            "Data missing phase_center_ra_app or phase_center_dec_app, "
+                            "which implies that the data were phased using the 'old' "
+                            "method for phasing (which is not compatible with the new "
+                            "version of the code). You can fix this by calling the "
+                            "phase method with fix_old_proj=True, or can otherwise "
+                            "proceed by using the 'old' projection method by setting "
+                            "use_old_proj=True."
+                        )
+                else:
+                    old_w_vals = self.uvw_array[:, 2].copy()
+                    old_app_ra = self.phase_center_app_ra
+                    old_app_dec = self.phase_center_app_dec
+                    from_enu = False
+                    if self.multi_object:
+                        # Check and see if we have any unphased objects, in which case
+                        # their w-values should be zeroed out.
+                        old_w_vals[self._check_for_unphased_objects] = 0.0
             else:
                 raise ValueError(
                     "The phasing type of the data is unknown. "
@@ -3231,6 +3256,8 @@ class UVData(UVBase):
                 )
 
             if select_mask is not None:
+                if not len(select_mask) != self.Nblts:
+                    raise IndexError("Selection mask must be of length Nblts.")
                 time_array = time_array[select_mask]
                 lst_array = lst_array[select_mask]
                 uvw_array = uvw_array[select_mask, :]
@@ -3351,14 +3378,15 @@ class UVData(UVBase):
         if self.multi_object:
             raise NotImplementedError(
                 "Multi-object data sets are not compatible with the old phasing "
-                "method, please set use_old_phase=False."
+                "method, please set use_old_proj=False."
             )
 
         warnings.warn(
             "The original `phase` method will be deprecated in a future release. "
             "Note that the old and new phase methods are NOT compatible with one "
-            "another, so if you have phased using the old method, you should use "
-            "the unphase_to_drift method with use_old_phase=True to undo the old "
+            "another, so if you have phased using the old method, you should call "
+            "the phase method with fix_old_proj=True, or otherwise can use the "
+            "unphase_to_drift method with use_old_proj=True to undo the old "
             "corrections before using the new version of the phase method.",
             DeprecationWarning,
         )
@@ -3380,7 +3408,7 @@ class UVData(UVBase):
                     self.unphase_to_drift(
                         phase_frame=orig_phase_frame,
                         use_ant_pos=use_ant_pos,
-                        use_old_phase=True,
+                        use_old_proj=True,
                     )
             else:
                 raise ValueError(
@@ -3701,9 +3729,8 @@ class UVData(UVBase):
         allow_phasing=False,
         orig_phase_frame=None,
         output_phase_frame="icrs",
-        use_old_phase=None,
-        auto_select_phase=True,
         use_novas=False,
+        use_old_proj=False,
     ):
         """
         Calculate UVWs based on antenna_positions.
@@ -3721,11 +3748,9 @@ class UVData(UVBase):
         output_phase_frame : str
             The astropy frame to phase to. Either 'icrs' or 'gcrs'. Only used if
             allow_phasing is True.
-        use_old_phase : bool
+        use_old_proj : bool
             If set to True, uses the 'old' method of calculating baseline vectors.
-        auto_select_phase : bool
-            Allow the phase method to determine whether or not use the old phasing
-            method or not. Default is True, overrides the input to use_old_phase.
+            Default is False, which will instead use the 'new' method.
 
         Raises
         ------
@@ -3738,18 +3763,14 @@ class UVData(UVBase):
             If the phase_type is 'phased'
 
         """
-        # Basically, the only time we need to use the 'old' phase method is if we are
-        # working with a 'phased' data set, where the apparent coordinates have not
-        # been calculated.
-        if auto_select_phase and use_old_phase is None:
-            use_old_phase = (self.phase_type == "phased") and (
-                self.phase_center_app_ra is None or self.phase_center_app_dec is None
-            )
-        if not use_old_phase:
+        if not use_old_proj and not (
+            self.phase_center_app_ra is None or self.phase_center_app_dec is None
+        ):
             telescope_location = self.telescope_location_lat_lon_alt
             new_uvw = uvutils.calc_uvw(
                 app_ra=self.phase_center_app_ra,
                 app_dec=self.phase_center_app_dec,
+                app_pa=self.phase_center_app_pa,
                 lst_array=self.lst_array,
                 use_ant_pos=True,
                 antenna_positions=self.antenna_positions,
@@ -3762,17 +3783,6 @@ class UVData(UVBase):
                 to_enu=(self.phase_type != "phased"),
             )
             if self.phase_type == "phased":
-                if (self.phase_center_app_ra is None) or (
-                    self.phase_center_app_dec is None
-                ):
-                    raise AttributeError(
-                        "Object missing phase_center_ra_app or phase_center_dec_app, "
-                        "which implies that the data were phased using the 'old' "
-                        "method for phasing (which is not compatible with the new "
-                        "version of the code). Please run unphase_to_drift with "
-                        "use_old_phase=True to use the new method, otherwise call "
-                        "phase with use_old_phase=True to continue."
-                    )
                 if allow_phasing:
                     old_w_vals = self.uvw_array[:, 2].copy()
                     if self.multi_object:
@@ -3782,6 +3792,13 @@ class UVData(UVBase):
             # need to update the uvw's and we are home free.
             self.uvw_array = new_uvw
             return
+
+        # Multi-obj datasets should never use the 'old' uvw calculation method
+        if self.multi_object:
+            raise NotImplementedError(
+                "Multi-object data sets are not compatible with the old uvw "
+                "calculation  method, please set use_old_proj=False."
+            )
 
         phase_type = self.phase_type
         if phase_type == "phased":
@@ -3806,7 +3823,7 @@ class UVData(UVBase):
                 phase_center_dec = self.phase_center_dec
                 phase_center_epoch = self.phase_center_epoch
                 self.unphase_to_drift(
-                    phase_frame=orig_phase_frame, use_old_phase=use_old_phase,
+                    phase_frame=orig_phase_frame, use_old_proj=True,
                 )
             else:
                 raise ValueError(
@@ -3849,7 +3866,7 @@ class UVData(UVBase):
                 phase_center_dec,
                 phase_center_epoch,
                 phase_frame=output_phase_frame,
-                use_old_phase=use_old_phase,
+                use_old_proj=use_old_proj,
                 use_novas=use_novas,
             )
 
@@ -7059,6 +7076,9 @@ class UVData(UVBase):
         check_extra=True,
         run_check_acceptability=True,
         strict_uvw_antpos_check=False,
+        use_novas=False,
+        use_old_proj=False,
+        fix_old_proj=False,
     ):
         """
         Read in data from a list of FHD files.
@@ -7196,6 +7216,9 @@ class UVData(UVBase):
         check_extra=True,
         run_check_acceptability=True,
         strict_uvw_antpos_check=False,
+        use_novas=False,
+        use_old_proj=False,
+        fix_old_proj=False,
     ):
         """
         Read in data from a miriad file.
@@ -7321,6 +7344,8 @@ class UVData(UVBase):
         run_check_acceptability=True,
         strict_uvw_antpos_check=False,
         use_novas=False,
+        use_old_proj=False,
+        fix_old_proj=False,
     ):
         """
         Read in data from a measurement set.
@@ -7567,6 +7592,8 @@ class UVData(UVBase):
         run_check_acceptability=True,
         strict_uvw_antpos_check=False,
         use_novas=False,
+        use_old_proj=False,
+        fix_old_proj=False,
     ):
         """
         Read in header, metadata and data from a single uvfits file.
@@ -7730,6 +7757,9 @@ class UVData(UVBase):
         check_extra=True,
         run_check_acceptability=True,
         strict_uvw_antpos_check=False,
+        use_novas=False,
+        use_old_proj=False,
+        fix_old_proj=False,
     ):
         """
         Read a UVH5 file.
@@ -7932,6 +7962,8 @@ class UVData(UVBase):
         corrchunk=None,
         pseudo_cont=False,
         use_novas=False,
+        use_old_proj=False,
+        fix_old_proj=False,
     ):
         """
         Read a generic file into a UVData object.
@@ -8336,6 +8368,9 @@ class UVData(UVBase):
                             check_extra=check_extra,
                             run_check_acceptability=run_check_acceptability,
                             strict_uvw_antpos_check=strict_uvw_antpos_check,
+                            use_novas=use_novas,
+                            use_old_proj=use_old_proj,
+                            fix_old_proj=fix_old_proj,
                         )
                         uv_list.append(uv2)
                     except KeyError as err:
@@ -8518,6 +8553,8 @@ class UVData(UVBase):
                     run_check_acceptability=run_check_acceptability,
                     strict_uvw_antpos_check=strict_uvw_antpos_check,
                     use_novas=use_novas,
+                    use_old_proj=use_old_proj,
+                    fix_old_proj=fix_old_proj,
                 )
 
             elif file_type == "mir":
@@ -8547,6 +8584,9 @@ class UVData(UVBase):
                     check_extra=check_extra,
                     run_check_acceptability=run_check_acceptability,
                     strict_uvw_antpos_check=strict_uvw_antpos_check,
+                    use_novas=use_novas,
+                    use_old_proj=use_old_proj,
+                    fix_old_proj=fix_old_proj,
                 )
 
             elif file_type == "mwa_corr_fits":
@@ -8582,6 +8622,9 @@ class UVData(UVBase):
                     check_extra=check_extra,
                     run_check_acceptability=run_check_acceptability,
                     strict_uvw_antpos_check=strict_uvw_antpos_check,
+                    use_novas=use_novas,
+                    use_old_proj=use_old_proj,
+                    fix_old_proj=fix_old_proj,
                 )
 
             elif file_type == "ms":
@@ -8595,6 +8638,8 @@ class UVData(UVBase):
                     run_check_acceptability=run_check_acceptability,
                     strict_uvw_antpos_check=strict_uvw_antpos_check,
                     use_novas=use_novas,
+                    use_old_proj=use_old_proj,
+                    fix_old_proj=fix_old_proj,
                 )
 
             elif file_type == "uvh5":
@@ -8619,6 +8664,9 @@ class UVData(UVBase):
                     check_extra=check_extra,
                     run_check_acceptability=run_check_acceptability,
                     strict_uvw_antpos_check=strict_uvw_antpos_check,
+                    use_novas=use_novas,
+                    use_old_proj=use_old_proj,
+                    fix_old_proj=fix_old_proj,
                 )
                 select = False
 
@@ -8677,6 +8725,9 @@ class UVData(UVBase):
                         orig_phase_frame=orig_phase_frame,
                         use_ant_pos=phase_use_ant_pos,
                         allow_rephase=True,
+                        use_novas=use_novas,
+                        use_old_proj=use_old_proj,
+                        fix_old_proj=fix_old_proj,
                     )
 
     def write_miriad(
