@@ -143,6 +143,8 @@ class MS(UVData):
         run_check_acceptability=True,
         strict_uvw_antpos_check=False,
         use_novas=False,
+        use_old_phase=False,
+        fix_phase=False,
     ):
         """
         Read in a casa measurement set.
@@ -395,6 +397,7 @@ class MS(UVData):
         assert tb_field.getcol("PHASE_DIR").shape[1] == 1, message
 
         self.phase_type = "phased"
+        self.phase_center_frame = "icrs"
         # MSv2.0 appears to assume J2000. Not sure how to specifiy otherwise
         epoch_string = tb.getcolkeyword("UVW", "MEASINFO")["Ref"]
         # for measurement sets made with COTTER, this keyword is ITRF
@@ -449,5 +452,4 @@ class MS(UVData):
                 check_extra=check_extra,
                 run_check_acceptability=run_check_acceptability,
                 strict_uvw_antpos_check=strict_uvw_antpos_check,
-                use_novas=use_novas,
             )
