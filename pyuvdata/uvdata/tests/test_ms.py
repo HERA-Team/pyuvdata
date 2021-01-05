@@ -43,15 +43,7 @@ def test_cotter_ms():
     # apparent coordinate plane). We should decide whether this is how pyuvdata coords
     # should be oriented, or if they should be rotated so that "north" is towards the
     # apparent celestial pole
-    with uvtest.check_warnings(
-        UserWarning,
-        [
-            "Warning: select on read keyword set",
-            "The uvw_array does not match the expected values",
-            "The uvw_array does not match the expected values",
-            "The uvw_array does not match the expected values",
-        ],
-    ):
+    with uvtest.check_warnings(UserWarning, ["Warning: select on read keyword set"]):
         uvobj2.read(testfile, freq_chans=np.arange(2))
     uvobj.select(freq_chans=np.arange(2))
     assert uvobj == uvobj2
@@ -172,10 +164,9 @@ def test_read_ms_read_uvfits(nrao_uv, casa_uvfits):
     # extra keywords are also different, set both to empty dicts
     uvfits_uv.extra_keywords = {}
     ms_uv.extra_keywords = {}
-
+    print(ms_uv.extra_keywords)
+    print(uvfits_uv.extra_keywords)
     assert uvfits_uv == ms_uv
-    del ms_uv
-    del uvfits_uv
 
 
 @pytest.mark.filterwarnings("ignore:Telescope EVLA is not in known_telescopes.")

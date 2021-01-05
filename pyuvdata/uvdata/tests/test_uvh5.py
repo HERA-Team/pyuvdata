@@ -1594,6 +1594,7 @@ def test_uvh5_read_header_special_cases(casa_uvfits, tmp_path):
     uv_in.vis_units = "UNCALIB"
     uv_in.phase_center_app_ra = None
     uv_in.phase_center_app_dec = None
+    uv_in.phase_center_app_pa = None
     assert uv_in == uv_out
 
     # clean up
