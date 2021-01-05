@@ -7,13 +7,14 @@ import re
 import copy
 import warnings
 from collections.abc import Iterable
+from copy import deepcopy
 
 import numpy as np
 from scipy.spatial.distance import pdist, squareform
 from astropy.time import Time
 from astropy.coordinates import Angle
 from astropy.utils import iers
-from astropy.coordinates import SkyCoord, EarthLocation, TETE
+from astropy.coordinates import SkyCoord, EarthLocation, TETE, FK5, FK4, FK4NoETerms
 import astropy.units as units
 from . import _utils
 
@@ -1133,14 +1134,14 @@ def rotate_one_axis(xyz_array, rot_amount, rot_axis):
     rotated_xyz : ndarray of float
         Set of rotated 3-dimensional vectors, shape (Nrot, 3, Nvector).
     """
-    # If rot_amount is None, then this is just one big old no-op.
-    if rot_amount is None:
+    # If rot_amount is None or all zeros, then this is just one big old no-op.
+    if (rot_amount is None) or np.all(rot_amount == 0.0):
         if np.ndim(xyz_array) == 1:
-            return xyz_array[np.newaxis, :, np.newaxis]
+            return deepcopy(xyz_array[np.newaxis, :, np.newaxis])
         elif np.ndim(xyz_array) == 2:
-            return xyz_array[np.newaxis, :, :]
+            return deepcopy(xyz_array[np.newaxis, :, :])
         else:
-            return xyz_array
+            return deepcopy(xyz_array)
 
     # Check and see how big of a rotation matrix we need
     n_rot = 1 if (not isinstance(rot_amount, np.ndarray)) else (rot_amount.shape[0])
@@ -1206,13 +1207,16 @@ def rotate_two_axis(xyz_array, rot_amount1, rot_amount2, rot_axis1, rot_axis2):
         Set of rotated 3-dimensional vectors, shape (Nrot, 3, Nvector).
 
     """
-    if rot_amount1 is None and rot_amount2 is None:
+    # Capture some special cases upfront, where we can save ourselves a bit of work
+    no_rot1 = (rot_amount1 is None) or np.all(rot_amount1 == 0.0)
+    no_rot2 = (rot_amount2 is None) or np.all(rot_amount2 == 0.0)
+    if no_rot1 and no_rot2:
         # If rot_amount is None, then this is just one big old no-op.
-        return xyz_array
-    elif (rot_amount1 is None) or np.all(rot_amount1 == 0.0):
+        return deepcopy(xyz_array)
+    elif no_rot1:
         # If rot_amount1 is None, then ignore it and just work w/ the 2nd rotation
         return rotate_one_axis(xyz_array, rot_amount2, rot_axis2)
-    elif (rot_amount2 is None) or np.all(rot_amount2 == 0.0):
+    elif no_rot2:
         # If rot_amount2 is None, then ignore it and just work w/ the 1st rotation
         return rotate_one_axis(xyz_array, rot_amount1, rot_axis1)
     elif rot_axis1 == rot_axis2:
@@ -1386,10 +1390,10 @@ def calc_uvw(
                 "in ENU coordinates!"
             )
     else:
-        if (app_ra is None) or (app_dec is None):
+        if ((app_ra is None) or (app_dec is None)) and app_pa is None:
             raise ValueError(
-                "Must include app_ra and app_dec to calculate baselines in uvw "
-                "coordinates!"
+                "Must include both app_ra and app_dec, or app_pa to calculate "
+                "baselines in uvw coordinates!"
             )
 
     if use_ant_pos:
@@ -1489,37 +1493,64 @@ def calc_uvw(
                     "and uvw coordinates!"
                 )
         else:
-            if (old_app_ra is None) or (old_app_dec is None):
+            if (app_ra is None and old_app_ra is None) and (
+                app_dec is None and old_app_dec is None
+            ):
+                if (old_app_pa is None) != (app_pa is None):
+                    raise ValueError(
+                        "Must include old_app_pa values if data are phased and "
+                        "applying new position angle values (app_pa)."
+                    )
+                if (old_app_pa is None) and (app_pa is None):
+                    # Update uvw by changing.... nothing? Returning back a copy of the
+                    # array (rather than a ref) so that the two arrays aren't coupled.
+                    return deepcopy(uvw_array)
+            elif (old_app_ra is None) or (old_app_dec is None):
                 raise ValueError(
-                    "Must include old_ra and old_dec values if data are phased!"
+                    "Must include old_app_ra and old_app_dec values when data are "
+                    "already phased and phasing to a new position."
                 )
         # For this operation, all we need is the delta-ha coverage, which _should_ be
         # entirely encapsulated by the change in RA.
-        gha_delta_array = (lst_array if from_enu else old_app_ra) - (
-            lst_array if to_enu else app_ra
-        )
+        if app_ra is None:
+            gha_delta_array = 0.0
+        else:
+            gha_delta_array = (lst_array if from_enu else old_app_ra) - (
+                lst_array if to_enu else app_ra
+            )
 
-        # Notice that there's an axis re-orientation here, to go from uvw -> XYZ,
+        # Notice below there's an axis re-orientation here, to go from uvw -> XYZ,
         # where X is pointing in the direction of the source. This is mostly here
         # for convenience and code legibility -- a slightly different pair of
         # rotations would give you the same result w/o needing to cycle the axes.
-        new_coords = rotate_two_axis(
-            rotate_two_axis(  # Yo dawg, I heard you like rotation maticies...
+
+        # Up front, we want to trap the corner-case where the phase position hasn't
+        # changed, just the position angle. This is a much easier transform to handle
+        if np.all(gha_delta_array == 0.0) and np.all(old_app_dec == app_dec):
+            new_coords = rotate_one_axis(
                 uvw_array[:, [2, 0, 1], np.newaxis],
-                0.0 if from_enu else (-old_app_pa),
-                (-telescope_lat) if from_enu else (-old_app_dec),
+                app_pa - (0.0 if old_app_pa is None else old_app_pa),
                 0,
+            )[:, :, 0]
+        else:
+            new_coords = rotate_two_axis(
+                rotate_two_axis(  # Yo dawg, I heard you like rotation maticies...
+                    uvw_array[:, [2, 0, 1], np.newaxis],
+                    0.0 if from_enu else (-old_app_pa),
+                    (-telescope_lat) if from_enu else (-old_app_dec),
+                    0,
+                    1,
+                ),
+                gha_delta_array,
+                telescope_lat if to_enu else app_dec,
+                2,
                 1,
-            ),
-            gha_delta_array,
-            telescope_lat if to_enu else app_dec,
-            2,
-            1,
-        )
-        # One final rotation applied here, to compensate for the fact that we want the
-        # Dec-axis of our image (Fourier dual to the v-axis) to be aligned with the
-        # chosen frame
-        new_coords = np.transpose(rotate_one_axis(new_coords, app_pa, 0)[:, :, 0])
+            )
+
+            # One final rotation applied here, to compensate for the fact that we want
+            # the Dec-axis of our image (Fourier dual to the v-axis) to be aligned with
+            # the chosen frame
+            new_coords = rotate_one_axis(new_coords, app_pa, 0)[:, :, 0]
 
     # There's one last task to do, which is to re-align the axes from projected
     # XYZ -> uvw, where X (which points towards the source) falls on the w axis,
@@ -2529,10 +2560,10 @@ def translate_icrs_to_app(
         # want to do a three rotations to do this "right", but the PM values
         # are < 1 arcsec, and so usual small-angle approximations hold up well
         # (where the resultant error is < 1 microarcsec).
-        pos_vector = rotate_two_axis(pos_vector, -pm_y_array, pm_x_array, 1, 0)
+        pos_vector = rotate_two_axis(pos_vector, -pm_y_array, pm_x_array, 1, 0)[:, :, 0]
 
         # Convert the 3D vector back to RA/Dec values
-        app_ra = np.mod(np.arctan2(pos_vector[:, 0], pos_vector[:, 1]), 2.0 * np.pi,)
+        app_ra = np.mod(np.arctan2(pos_vector[:, 0], pos_vector[:, 1]), 2.0 * np.pi)
         app_dec = np.arcsin(pos_vector[:, 2])
     else:
         # Import the NOVAS library only if it's needed/available.
@@ -2620,14 +2651,259 @@ def translate_icrs_to_app(
     return app_ra, app_dec
 
 
+def translate_app_to_sidereal(
+    time_array,
+    app_ra,
+    app_dec,
+    telescope_lat,
+    telescope_lon,
+    telescope_alt,
+    ref_frame,
+    ref_epoch=None,
+):
+    """
+    Translate a set of coordinates in topocentric/apparent to ICRS coordinates.
+
+    This utility uses either astropy to calculate the ICRS  coordinates of a given
+    set of apparent source coordinates. These coordinates are most typically used
+    for defining the celestial/catalog position of a source. Note that at present,
+    this is only implemented in astropy, although it could hypothetically be extended
+    to NOVAS at some point.
+
+    Parameters
+    ----------
+    time_array : float or ndarray of float
+        Julian dates to calculate coordinate positions for. Can either be a single
+        float, or an ndarray of shape is (Ntimes,).
+    app_ra : float or ndarray of float
+        ICRS RA of the celestial target, expressed in units of radians. Can either
+        be a single float or array of shape (Ntimes,), although this must be consistent
+        with other parameters (with the exception of telescope location parameters).
+    app_dec : float or ndarray of float
+        ICRS Dec of the celestial target, expressed in units of radians. Can either
+        be a single float or array of shape (Ntimes,), although this must be consistent
+        with other parameters (with the exception of telescope location parameters).
+    telescope_lon : float
+        ITRF longitude of the phase center of the array, expressed in units of radians.
+    telescope_lat : float
+        ITRF latitude of the phase center of the array, expressed in units of radians.
+    telescope_alt : float
+        Altitude (rel to sea-level) of the phase center of the array, expressed in
+        units of meters.
+    use_novas : boolean
+        Use novas in order to calculate the apparent coordinates. Default is false,
+        which instead uses astropy for deriving coordinate positions.
+
+    Returns
+    -------
+    icrs_ra : ndarray of floats
+        Apparent right ascension coordinates, in units of radians, of shape (Ntimes,).
+    icrs_dec : ndarray of floats
+        Apparent declination coordinates, in units of radians, of shape (Ntimes,).
+    """
+    # Check here to make sure that ra_coord and dec_coord are the same length,
+    # either 1 or len(time_array)
+    if isinstance(app_ra, np.ndarray) != isinstance(app_dec, np.ndarray):
+        raise ValueError("ra_coord and dec_coord must be the same type!")
+    elif not isinstance(time_array, np.ndarray):
+        if (len(app_ra) != 1) or (len(app_dec) != 1):
+            raise ValueError(
+                "ra_coord and dec_coord must be the same length, either 1 (single "
+                "float) or of the same length as time_array!"
+            )
+    else:
+        if (len(app_ra) != len(time_array)) and (len(app_dec) != len(time_array)):
+            raise ValueError(
+                "ra_coord and dec_coord must be the same length, either 1 (single "
+                "float) or of the same length as time_array!"
+            )
+
+    # Useful for both astropy and novas methods, the latter of which gives easy
+    # access to the IERS data that we want.
+    time_obj_array = Time(time_array, format="jd", scale="utc")
+
+    # Get IERS data, which is needed for both rotations
+    polar_motion_data = iers.earth_orientation_table.get()
+
+    pm_x_array, pm_y_array = polar_motion_data.pm_xy(time_array)
+    # Let's just make sure we have the right units here. This should be
+    # true unless astropy makes a change we are unaware of.
+    assert pm_x_array.unit == "arcsec"
+    assert pm_y_array.unit == "arcsec"
+
+    # Extract out just the value arrays, convert to rad
+    pm_x_array = pm_x_array.value * ((np.pi / 180.0) / 3600.0)
+    pm_y_array = pm_y_array.value * ((np.pi / 180.0) / 3600.0)
+
+    # TETE doesn't seem to have polar wobble applied, which appears to be the only
+    # difference with NOVAS "topocentric". Let's unfix that, shall we?
+    pos_vector = np.transpose(
+        np.array(
+            [
+                np.sin(app_ra) * np.cos(app_dec),
+                np.cos(app_ra) * np.cos(app_dec),
+                np.sin(app_dec),
+            ]
+        )
+    )[:, :, np.newaxis]
+
+    # Technically, this implementation isn't perfect, as you really would
+    # want to do a three rotations to do this "right", but the PM values
+    # are < 1 arcsec, and so the usual small-angle approximations hold up
+    # well (where the resultant error is < 1 microarcsec).
+    pos_vector = rotate_two_axis(pos_vector, pm_y_array, -pm_x_array, 1, 0)[:, :, 0]
+
+    # Convert the 3D vector back to RA/Dec values
+    tete_ra = np.mod(np.arctan2(pos_vector[:, 0], pos_vector[:, 1]), 2.0 * np.pi,)
+    tete_dec = np.arcsin(pos_vector[:, 2])
+
+    site_loc = EarthLocation.from_geodetic(
+        telescope_lon * (180.0 / np.pi),
+        telescope_lat * (180.0 / np.pi),
+        height=telescope_alt,
+    )
+
+    # Note that the below is _very_ unhappy being fed pm, parallax,
+    # or rad vel info into the AltAz frame. Something to investigate later.
+    sou_info = SkyCoord(
+        ra=tete_ra * units.rad,
+        dec=tete_dec * units.rad,
+        frame="tete",
+        location=site_loc,
+        obstime=time_obj_array,
+    )
+
+    # The FK4 (Bessel-Newcomb) and FK5 (Julian) coord systems have to be handled
+    # with a little extra care, since they have embedded within them the concept
+    # of an epoch (equinox), which is separate from the time of obs.
+    if ref_frame.lower() == "fk5":
+        sidereal_coord_data = sou_info.transform_to(
+            FK5(
+                equinox=ref_epoch
+                if (isinstance(ref_epoch, str) or isinstance(ref_epoch, Time))
+                else (None if ref_epoch is None else "J%f" % ref_epoch),
+            )
+        )
+    elif ref_frame.lower() == "fk4":
+        sidereal_coord_data = sou_info.transform_to(
+            FK4(
+                equinox=ref_epoch
+                if (isinstance(ref_epoch, str) or isinstance(ref_epoch, Time))
+                else (None if ref_epoch is None else "B%f" % ref_epoch),
+            )
+        )
+    elif ref_frame.lower() == "fk4noeterms":
+        sidereal_coord_data = sou_info.transform_to(
+            FK4NoETerms(
+                equinox=ref_epoch
+                if (isinstance(ref_epoch, str) or isinstance(ref_epoch, Time))
+                else (None if ref_epoch is None else "B%f" % ref_epoch),
+            )
+        )
+    else:
+        sidereal_coord_data = sou_info.transform_to(ref_frame.lower())
+
+    # Return back the two RA/Dec arrays
+    return sidereal_coord_data.ra.rad, sidereal_coord_data.dec.rad
+
+
+def calc_pos_angle(
+    time_array,
+    app_ra,
+    app_dec,
+    telescope_lat,
+    telescope_lon,
+    telescope_alt,
+    ref_frame,
+    ref_epoch=None,
+):
+    """
+    Calculate an position angle given apparent position and reference frame.
+
+    This is a function that does cool stuff.
+    """
+    # Check to see if the position angles should default to zero
+    if (ref_frame is None) or (ref_frame == "topo"):
+        # No-op detected, ENGAGE MAXIMUM SNARK!
+        return np.zeros_like(time_array)
+
+    # This creates an array of unique entries of ra + dec + time, since the processing
+    # time for each element can be non-negligible, and entries along the Nblt axis can
+    # be highly redundant.
+    unique_mask = np.union1d(
+        np.union1d(
+            np.unique(app_ra, return_index=True)[1],
+            np.unique(app_dec, return_index=True)[1],
+        ),
+        np.unique(time_array, return_index=True)[1],
+    )
+
+    # Pluck out the unique entries for each
+    unique_ra = app_ra[unique_mask]
+    unique_dec = app_dec[unique_mask]
+    unique_time = time_array[unique_mask]
+
+    # Figure out how many elements we need to transform
+    n_coord = len(unique_mask)
+
+    # Offset north/south positions by 0.5 deg, such that the PA is determined over a
+    # 1 deg arc.
+    up_dec = unique_dec + (np.pi / 360.0)
+    dn_dec = unique_dec - (np.pi / 360.0)
+    up_ra = dn_ra = unique_ra
+
+    # Wrap the positions if they happen to go over the poles
+    up_ra[up_dec > (np.pi / 2.0)] = np.mod(
+        up_ra[up_dec > (np.pi / 2.0)] + np.pi, 2.0 * np.pi
+    )
+    up_dec[up_dec > (np.pi / 2.0)] = np.pi - up_dec[up_dec > (np.pi / 2.0)]
+
+    dn_ra[-dn_dec > (np.pi / 2.0)] = np.mod(
+        dn_ra[dn_dec > (np.pi / 2.0)] + np.pi, 2.0 * np.pi
+    )
+    dn_dec[-dn_dec > (np.pi / 2.0)] = np.pi - dn_dec[-dn_dec > (np.pi / 2.0)]
+
+    # Run the set of offset coordinates through the "reverse" transform. The two offset
+    # positions are concat'd together to help reduce overheads
+    ref_ra, ref_dec = translate_app_to_sidereal(
+        np.tile(unique_time, 2),
+        np.concatenate((up_ra, dn_ra)),
+        np.concatenate((up_dec, dn_dec)),
+        telescope_lat,
+        telescope_lon,
+        telescope_alt,
+        ref_frame,
+        ref_epoch=ref_epoch,
+    )
+
+    # Using the following formula, we can get the pos angle for the offset positions:
+    # atan2(sin(ra_d - ra_u), cos(dec_d)*tan(dec_u) - sin(dec_d)*cos(ra_u - ra_d))
+    # Remember that the first n_coord elements are for the 'up' position, and the last
+    # n_coord elements are for the 'down' position.
+    unique_pa = np.arctan2(
+        np.sin(ref_ra[n_coord:] - ref_ra[:n_coord]),
+        (np.cos(ref_dec[n_coord:]) * np.tan(ref_dec[:n_coord]))
+        - (np.sin(ref_dec[n_coord:]) * np.cos(ref_ra[:n_coord] - ref_ra[n_coord:])),
+    )
+
+    # Finally, we have to go back through and "fill in" the redundant entries
+    app_pa = np.zeros_like(app_ra)
+    for idx in range(n_coord):
+        select_mask = np.logical_and(
+            np.logical_and(unique_ra[idx] == app_ra, unique_dec[idx] == app_dec,),
+            unique_time[idx] == time_array,
+        )
+        app_pa[select_mask] = unique_pa[idx]
+
+    return app_pa
+
+
 def calc_app_coords(
     lon_coord,
     lat_coord,
     coord_frame,
     coord_epoch=None,
     object_type=None,
-    ref_frame=None,
-    ref_epoch=None,
     time_array=None,
     lst_array=None,
     pm_ra=None,
@@ -2645,7 +2921,6 @@ def calc_app_coords(
     This is a function that does all sorts of interesting things, and I will write a
     lot more about it shortly.
     """
-    icrs_ra = icrs_dec = None
     unique_time_array = np.unique(time_array)
     if object_type == "sidereal":
         icrs_ra, icrs_dec = translate_sidereal_to_sidereal(
@@ -2687,102 +2962,16 @@ def calc_app_coords(
     else:
         raise ValueError("Object type %s is not recognized." % object_type)
 
-    # If we aren't asking for a reference frame, then we assume that the coord
-    # system is all being handled in apparent coordinates. No fuss, no muss!
-    if (ref_frame is None) or (icrs_ra is None) or (icrs_dec is None):
-        unique_app_pa = np.zeros_like(unique_app_ra)
-    else:
-        # At this point, we assume that we have calclulated the source position in the
-        # icrs coordinate frame, and so we'll work from there
-        frame_ra, frame_dec = translate_sidereal_to_sidereal(
-            icrs_ra,
-            icrs_dec,
-            "icrs",
-            coord_frame,
-            out_coord_epoch=coord_epoch
-            if (isinstance(coord_epoch, str) or isinstance(coord_epoch, Time))
-            else (None if coord_epoch is None else "J%f" % coord_epoch),
-            time_array=unique_time_array,
-        )
-
-        # Offset north/south positions by 1 deg
-        up_dec = frame_dec + (np.pi / 180.0)
-        dn_dec = frame_dec - (np.pi / 180.0)
-        up_ra = dn_ra = frame_ra
-
-        # Wrap the positions if they happen to go over the poles
-        up_ra[up_dec > (np.pi / 2.0)] = np.mod(
-            up_ra[up_dec > (np.pi / 2.0)] + np.pi, 2.0 * np.pi
-        )
-        up_dec[up_dec > (np.pi / 2.0)] = np.pi - up_dec[up_dec > (np.pi / 2.0)]
-
-        dn_ra[-dn_dec > (np.pi / 2.0)] = np.mod(
-            dn_ra[dn_dec > (np.pi / 2.0)] + np.pi, 2.0 * np.pi
-        )
-        dn_dec[-dn_dec > (np.pi / 2.0)] = np.pi - dn_dec[-dn_dec > (np.pi / 2.0)]
-
-        up_icrs_ra, up_icrs_dec = translate_sidereal_to_sidereal(
-            up_ra,
-            up_dec,
-            coord_frame,
-            "icrs",
-            in_coord_epoch=coord_epoch
-            if (isinstance(coord_epoch, str) or isinstance(coord_epoch, Time))
-            else (None if coord_epoch is None else "J%f" % coord_epoch),
-            time_array=unique_time_array,
-        )
-
-        dn_icrs_ra, dn_icrs_dec = translate_sidereal_to_sidereal(
-            dn_ra,
-            dn_dec,
-            coord_frame,
-            "icrs",
-            in_coord_epoch=coord_epoch
-            if (isinstance(coord_epoch, str) or isinstance(coord_epoch, Time))
-            else (None if coord_epoch is None else "J%f" % coord_epoch),
-            time_array=unique_time_array,
-        )
-
-        app_up_ra, app_up_dec = translate_icrs_to_app(
-            unique_time_array,
-            up_icrs_ra,
-            up_icrs_dec,
-            telescope_lat,
-            telescope_lon,
-            telescope_alt,
-            use_novas=use_novas,
-        )
-
-        app_dn_ra, app_dn_dec = translate_icrs_to_app(
-            unique_time_array,
-            dn_icrs_ra,
-            dn_icrs_dec,
-            telescope_lat,
-            telescope_lon,
-            telescope_alt,
-            use_novas=use_novas,
-        )
-
-        # We have a negative sign here because the PA is between requested ->
-        # apparent frames, when we want apparent -> requested
-        unique_app_pa = -np.arctan2(
-            np.sin(app_dn_ra - app_up_ra),
-            (np.cos(app_dn_dec) * np.tan(app_up_dec))
-            - (np.sin(app_dn_dec) * np.cos(app_up_ra - app_dn_ra)),
-        )
-
     # Now that we've calculated all the unique values, time to backfill through the
     # "redundant" entries in the Nblt axis.
     app_ra = np.zeros_like(time_array)
     app_dec = np.zeros_like(time_array)
-    app_pa = np.zeros_like(time_array)
     for idx, unique_time in enumerate(unique_time_array):
         select_mask = time_array == unique_time
         app_ra[select_mask] = unique_app_ra[idx]
         app_dec[select_mask] = unique_app_dec[idx]
-        app_pa[select_mask] = unique_app_pa[idx]
 
-    return app_ra, app_dec, app_pa
+    return app_ra, app_dec
 
 
 def get_lst_for_time(jd_array, latitude, longitude, altitude, use_novas=False):
