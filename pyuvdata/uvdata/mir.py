@@ -342,7 +342,24 @@ class Mir(UVData):
         self.phase_center_app_ra = mir_data.in_data["rar"][bl_in_maparr[sb_screen]]
         self.phase_center_app_dec = mir_data.in_data["decr"][bl_in_maparr[sb_screen]]
 
-        self.antenna_diameters = np.zeros(self.Nants_telescope) + 6
+        # Do a thing
+        app_pa = uvutils.calc_pos_angle(
+            self.time_array,
+            self.phase_center_app_ra,
+            self.phase_center_app_dec,
+            self.telescope_location_lat_lon_alt[0],
+            self.telescope_location_lat_lon_alt[1],
+            self.telescope_location_lat_lon_alt[2],
+            "icrs",
+        )
+
+        self.uvw_array = uvutils.calc_uvw(
+            uvw_array=self.uvw_array, old_app_pa=0.0, app_pa=app_pa, use_ant_pos=False,
+        )
+
+        self.phase_center_app_pa = app_pa
+
+        self.antenna_diameters = np.zeros(self.Nants_telescope) + 6.0
         self.blt_order = ("time", "baseline")
 
         # TODO: Spw axis to be collapsed in future release
