@@ -618,6 +618,7 @@ class FHD(UVData):
         self._set_phased()
         self.phase_center_ra_degrees = np.float(obs["OBSRA"][0])
         self.phase_center_dec_degrees = np.float(obs["OBSDEC"][0])
+        self.phase_center_frame = "icrs"  # TODO: Confirm this
 
         self.phase_center_epoch = astrometry["EQUINOX"][0]
         self._set_app_coords_helper()
