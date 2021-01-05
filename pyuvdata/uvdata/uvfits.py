@@ -529,7 +529,10 @@ class UVFITS(UVData):
 
             self.vis_units = vis_hdr.pop("BUNIT", "UNCALIB")
             self.phase_center_epoch = vis_hdr.pop("EPOCH", None)
-            self.phase_center_frame = vis_hdr.pop("PHSFRAME", None)
+            # It's not clear that this should default to None - PHSFRAME does not seem
+            # to be a standard UVFITS keyword, and it _looks_ like CASA/AIPS defaults
+            # to FK5 when this info is missing. Needs further investigation...
+            self.phase_center_frame = vis_hdr.pop("PHSFRAME", "icrs")
 
             self.extra_keywords = uvutils._get_fits_extra_keywords(
                 vis_hdr, keywords_to_skip=["DATE-OBS"]
@@ -690,6 +693,7 @@ class UVFITS(UVData):
                 # Set up these arrays so we can assign values to them
                 self.phase_center_app_ra = np.zeros(self.Nblts)
                 self.phase_center_app_dec = np.zeros(self.Nblts)
+                self.phase_center_app_pa = np.zeros(self.Nblts)
 
                 object_dict = {}
                 idx_dict = {}
@@ -722,8 +726,23 @@ class UVFITS(UVData):
                         time_array=self.time_array[self.object_id_array == sou_id],
                     )
 
+                    app_pa = uvutils.calc_pos_angle(
+                        self.time_array,
+                        app_ra,
+                        app_dec,
+                        self.telescope_location_lat_lon_alt[0],
+                        self.telescope_location_lat_lon_alt[1],
+                        self.telescope_location_lat_lon_alt[2],
+                        self.phase_center_frame,
+                        ref_epoch=self.phase_center_epoch,
+                    )
+
+                    print(app_pa)
+                    print(app_ra)
+                    print(app_dec)
                     self.phase_center_app_ra[self.object_id_array == sou_id] = app_ra
                     self.phase_center_app_dec[self.object_id_array == sou_id] = app_dec
+                    self.phase_center_app_pa[self.object_id_array == sou_id] = app_pa
 
                     idx_dict[sou_id] = idx
                     object_dict[sou_name] = {
@@ -1320,9 +1339,12 @@ class UVFITS(UVData):
                         object_dict["object_lat"],
                         object_dict["coord_frame"],
                         "fk5",
-                        coord_epoch=object_dict["coord_epoch"]
+                        in_coord_epoch=object_dict["coord_epoch"]
                         if "coord_epoch" in (object_dict.keys())
                         else None,
+                        out_coord_epoch=object_dict["coord_epoch"]
+                        if "coord_epoch" in (object_dict.keys())
+                        else 2000.0,
                         time_array=np.mean(self.time_array),
                     )
 
