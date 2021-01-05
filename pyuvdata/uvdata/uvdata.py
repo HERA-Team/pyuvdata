@@ -743,7 +743,7 @@ class UVData(UVBase):
             self.object_dict = {self.object_name[0]: object_dict}
             # When convering from single-source, all baselines should be phased to
             # a single target
-            self.object_id_array = np.ones(self.Nblts, dtype=np.int)
+            self.object_id_array = np.zeros(self.Nblts, dtype=np.int)
             self.Nobjects = 1
         else:
             # Convert object_name into an empty list
@@ -989,6 +989,9 @@ class UVData(UVBase):
         self._phase_center_epoch.required = False
         self._phase_center_ra.required = False
         self._phase_center_dec.required = False
+        self._phase_center_app_ra.required = False
+        self._phase_center_app_dec.required = False
+        self._phase_center_app_pa.required = False
 
     def set_drift(self):
         """
@@ -1016,6 +1019,9 @@ class UVData(UVBase):
         self._phase_center_epoch.required = True
         self._phase_center_ra.required = True
         self._phase_center_dec.required = True
+        self._phase_center_app_ra.required = True
+        self._phase_center_app_dec.required = True
+        self._phase_center_app_pa.required = True
 
     def set_phased(self):
         """
@@ -1197,7 +1203,7 @@ class UVData(UVBase):
         self.lst_array = unique_lst_array[inverse_inds]
         return
 
-    def _set_app_coords_helper(self, use_novas=False):
+    def _set_app_coords_helper(self, pa_only=False, use_novas=False):
         """
         Set values for the apparent coordinate arrays.
 
@@ -1215,10 +1221,12 @@ class UVData(UVBase):
             # Uhhh... what do you want me to do? If the dataset isn't phased, there
             # isn't an apparent position to calculate. Time to bail, I guess...
             return
-        if self.multi_object:
+        if pa_only:
+            app_ra = self.phase_center_app_ra
+            app_dec = self.phase_center_app_dec
+        elif self.multi_object:
             app_ra = np.zeros(self.Nblts, dtype=np.float)
             app_dec = np.zeros(self.Nblts, dtype=np.float)
-            app_pa = np.zeros(self.Nblts, dtype=np.float)
             for idx in np.unique(self.object_id_array):
                 if (idx < 0) or (idx > len(self.object_name)):
                     raise IndexError(
@@ -1238,16 +1246,12 @@ class UVData(UVBase):
                 pm_dec = temp_dict["pm_dec"] if "pm_dec" in temp_keys else None
                 rad_vel = temp_dict["rad_vel"] if "rad_vel" in temp_keys else None
                 parallax = temp_dict["parallax"] if "parallax" in temp_keys else None
-                (
-                    app_ra[select_mask],
-                    app_dec[select_mask],
-                    app_pa[select_mask],
-                ) = uvutils.calc_app_coords(
+
+                app_ra[select_mask], app_dec[select_mask] = uvutils.calc_app_coords(
                     lon_val,
                     lat_val,
                     frame,
                     coord_epoch=epoch,
-                    ref_frame=self.phase_center_frame,
                     pm_ra=pm_ra,
                     pm_dec=pm_dec,
                     rad_vel=rad_vel,
@@ -1263,12 +1267,11 @@ class UVData(UVBase):
         else:
             # So this is actually the easier of the two cases -- just use the object
             # properties to fill in the relevant data
-            app_ra, app_dec, app_pa = uvutils.calc_app_coords(
+            app_ra, app_dec = uvutils.calc_app_coords(
                 self.phase_center_ra,
                 self.phase_center_dec,
                 self.phase_center_frame,
                 coord_epoch=self.phase_center_epoch,
-                ref_frame=self.phase_center_frame,
                 time_array=self.time_array,
                 lst_array=self.lst_array,
                 telescope_lat=self.telescope_location_lat_lon_alt[0],
@@ -1277,6 +1280,19 @@ class UVData(UVBase):
                 use_novas=use_novas,
                 object_type="sidereal",
             )
+
+        # Now that we have the apparent coordinates sorted out, we can figure out what
+        # it is we want to do with the position angle
+        app_pa = uvutils.calc_pos_angle(
+            self.time_array,
+            app_ra,
+            app_dec,
+            self.telescope_location_lat_lon_alt[0],
+            self.telescope_location_lat_lon_alt[1],
+            self.telescope_location_lat_lon_alt[2],
+            self.phase_center_frame,
+            ref_epoch=self.phase_center_epoch,
+        )
         self.phase_center_app_ra = app_ra
         self.phase_center_app_dec = app_dec
         self.phase_center_app_pa = app_pa
@@ -3206,6 +3222,7 @@ class UVData(UVBase):
                 old_w_vals = 0.0
                 old_app_ra = None
                 old_app_dec = None
+                old_app_pa = None
                 from_enu = True
             elif self.phase_type == "phased":
                 old_w_vals = self.uvw_array[:, 2]
@@ -3243,6 +3260,7 @@ class UVData(UVBase):
                     old_w_vals = self.uvw_array[:, 2].copy()
                     old_app_ra = self.phase_center_app_ra
                     old_app_dec = self.phase_center_app_dec
+                    old_app_pa = self.phase_center_app_pa
                     from_enu = False
                     if self.multi_object:
                         # Check and see if we have any unphased objects, in which case
@@ -3302,10 +3320,25 @@ class UVData(UVBase):
                 use_novas=use_novas,
             )
 
+            # Now calculate position angles. If this is a single onject data set, the
+            # ref frame is always equal to the source coordinate frame. In a multi obj
+            # data set, those two components are allowed to be decoupled.
+            new_app_pa = uvutils.calc_pos_angle(
+                time_array,
+                new_app_ra,
+                new_app_dec,
+                telescope_location[0],
+                telescope_location[1],
+                telescope_location[2],
+                self.phase_center_frame if self.multi_object else phase_frame,
+                ref_epoch=self.phase_center_epoch if self.multi_object else epoch,
+            )
+
             # Now its time to do some rotations and calculate the new coordinates
             new_uvw = uvutils.calc_uvw(
                 app_ra=new_app_ra,
                 app_dec=new_app_dec,
+                app_pa=new_app_pa,
                 lst_array=lst_array,
                 use_ant_pos=use_ant_pos,
                 uvw_array=uvw_array,
@@ -3315,6 +3348,7 @@ class UVData(UVBase):
                 ant_2_array=ant_2_array,
                 old_app_ra=old_app_ra,
                 old_app_dec=old_app_dec,
+                old_app_pa=old_app_pa,
                 telescope_lat=telescope_location[0],
                 telescope_lon=telescope_location[1],
                 from_enu=from_enu,
@@ -3333,12 +3367,14 @@ class UVData(UVBase):
                 self.uvw_array[select_mask] = new_uvw
                 self.phase_center_app_ra[select_mask] = new_app_ra
                 self.phase_center_app_dec[select_mask] = new_app_dec
+                self.phase_center_app_pa[select_mask] = new_app_pa
                 if self.multi_object:
                     self.object_id_array[select_mask] = object_id
             else:
                 self.uvw_array = new_uvw
                 self.phase_center_app_ra = new_app_ra
                 self.phase_center_app_dec = new_app_dec
+                self.phase_center_app_pa = new_app_pa
                 if self.multi_object:
                     self.object_id_array[:] = object_id
 
@@ -5547,6 +5583,8 @@ class UVData(UVBase):
                 self.phase_center_app_ra = self.phase_center_app_ra[blt_inds]
             if self.phase_center_app_dec is not None:
                 self.phase_center_app_dec = self.phase_center_app_dec[blt_inds]
+            if self.phase_center_app_pa is not None:
+                self.phase_center_app_pa = self.phase_center_app_pa[blt_inds]
             if self.multi_object:
                 self.object_id_array = self.object_id_array[blt_inds]
 
@@ -6999,6 +7037,8 @@ class UVData(UVBase):
             self.phase_center_app_ra = self.phase_center_app_ra[blt_map]
         if self.phase_center_app_dec is not None:
             self.phase_center_app_dec = self.phase_center_app_dec[blt_map]
+        if self.phase_center_app_pa is not None:
+            self.phase_center_app_pa = self.phase_center_app_pa[blt_map]
         if self.multi_object:
             self.object_id_array = self.object_id_array[blt_map]
 
