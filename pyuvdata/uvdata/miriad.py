@@ -1227,7 +1227,6 @@ class Miriad(UVData):
         uv.add_var("inttime", "d")
 
         app_record = False
-        print(self.phase_center_app_pa)
         if (
             self.phase_center_app_ra is not None
             and self.phase_center_app_dec is not None
