@@ -1561,6 +1561,17 @@ def translate_driftscan_to_app(az_val, el_val, telescope_lat, lst_array):
 
     Calculates apparent coordinates for a driftscan observation, helpful (?) for
     telescopes which do not track.
+
+    Parameters
+    ----------
+    az_val : float
+        Azimuth value of the pointing, in radians.
+    el_val : float
+        Elevation value of the pointing, in radians.
+    telescope_lat : float
+        Latitude of the observatory, in radians.
+    lst_array : ndarray of float
+        LSTs at the time of observations, in units of radians.
     """
     coord_vector = np.array(
         [
@@ -2818,7 +2829,41 @@ def calc_pos_angle(
     """
     Calculate an position angle given apparent position and reference frame.
 
-    This is a function that does cool stuff.
+    This function is used to determine the position angle between the great
+    circle of declination in apparent coordinates, versus that in a given
+    reference frame. Note that this is slightly different than parallactic
+    angle, which is the difference between apparent declination and elevation.
+
+    Paramters
+    ---------
+    time_array : ndarray of floats
+        Array of julian dates to calculate position angle values for, of shape
+        (Ntimes,).
+    app_ra : ndarray of floats
+        Array of apparent RA values in units of radians, shape (Ntimes,).
+    app_dec : ndarray of floats
+        Array of apparent dec values in units of radians, shape (Ntimes,).
+    telescope_lat : float
+        Latitude of the observatory, in units of radians.
+    telescope_lon : float
+        Longitude of the observatory, in units of radians.
+    telescope_alt : float
+        Altitude of the observatory, in units of meters.
+
+    ref_frame : str
+        Coordinate frame to calculate position angles for. Can be any of the
+        several supported frames in astropy (a limited list: fk4, fk5, icrs,
+        gcrs, cirs, galactic).
+    ref_epoch : str or flt
+        Epoch of the coordinates, only used when ref_frame = fk4 or fk5. Given
+        in unites of fractional years, either as a float or as a string with
+        the epoch abbreviation (e.g, Julian epoch 2000.0 would be J2000.0).
+
+
+    Returns
+    -------
+    app_pa : ndarray of floats
+        Array of position angles, in units of radians.
     """
     # Check to see if the position angles should default to zero
     if (ref_frame is None) or (ref_frame == "topo"):

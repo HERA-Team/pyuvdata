@@ -773,6 +773,51 @@ class UVData(UVBase):
 
         This is a helper function for adding adding a source to the internal object
         catalog, contained within the attribute object_dict.
+
+        Parameters
+        ----------
+        object_name : str
+            Name of the object to be added, must be unique (i.e., not contained in the
+            UVData attribute object_name).
+        object_type : str
+            Type of object to be added. Must be one of the following:
+                sidereal - Most commonly used, described typically by RA/Dec
+                ephem - Describes "moving" objects, e.g., solar system bodies
+                driftscan - Fixed az/el position (assumes zenith if no args supplied)
+                unphased - Multi-obj equivalent of phase_type == "drift"
+        object_lon : float
+            Value of the longitudinal coordinate (e.g., RA, Az, l) of the object.
+            No default, not used for unphased objects.
+        object_lat : float
+            Value of the latitudinal coordinate (e.g., Dec, El, b) of the object.
+            No default, not used for unphased objects.
+        coord_frame : str
+            Coordinate frame that object_lon and object_lat are given in. Only used
+            for sidereal targets. Can be any of the several supported frames in
+            astropy (a limited list: fk4, fk5, icrs, gcrs, cirs, galactic).
+        coord_epoch : str or flt
+            Epoch of the coordinates, only used when coord_frame = fk4 or fk5. Given
+            in unites of fractional years, either as a float or as a string with the
+            epoch abbreviation (e.g, Julian epoch 2000.0 would be J2000.0).
+        object_pm_ra : float
+            Proper motion in RA, in units of mas/year. Not currently used.
+        object_pm_dec : float
+            Proper motion in Dec, in units of mas/year. Not currently used.
+        object_parallax : float
+            Parallax of the source, in units of pc. Not currently used.
+        object_rad_vel : float
+            Radial velocity of the source, in units of km/s. Not currently used.
+
+        Raises
+        ------
+        TypeError
+            If attempting to use the method w/ a UVData object where
+            multi_object=False, or if adding a sidereal source without coordinates.
+        IndexError
+            If attempting to add a non-unique source name.
+        NotImplementedError
+            Currently in place when attempting to add an ephem object, which is under
+            development.
         """
         # Check whether we should actually be doing this in the first place
         if not self.multi_object:
@@ -911,7 +956,15 @@ class UVData(UVBase):
         """
         Remove objects dictionaries and names that are no longer in use.
 
-        Remoeves
+        Goes through the object_dict and object_name attributes in UVData and
+        clears out entries that are no longer being used, and appropriately
+        updates the object_id_array accordingly. This function is not typically
+        called by users, but instead other finctions
+
+        Raises
+        ------
+        TypeError
+            If attempting to call _clear_objects() when multi_object=False.
         """
         if not self.mutli_object:
             raise TypeError("Cannot remove an object if multi_object != True.")
