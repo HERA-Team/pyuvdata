@@ -961,7 +961,7 @@ def test_phase_unphase_hera_bad_frame(uv1_2_set_uvws):
     uv_phase, uv_raw = uv1_2_set_uvws
     # check errors when trying to phase to an unsupported frame
     with pytest.raises(ValueError) as cm:
-        uv_phase.phase(0.0, 0.0, epoch="J2000", phase_frame="cirs", use_old_phase=True)
+        uv_phase.phase(0.0, 0.0, epoch="J2000", phase_frame="cirs", use_old_proj=True)
     assert str(cm.value).startswith("phase_frame can only be set to icrs or gcrs.")
 
 
@@ -978,17 +978,17 @@ def test_phasing():
     uvd2.read_uvfits(file2)
 
     uvd1_drift = uvd1.copy()
-    uvd1_drift.unphase_to_drift(phase_frame="gcrs", use_old_phase=True)
+    uvd1_drift.unphase_to_drift(phase_frame="gcrs", use_old_proj=True)
     uvd1_drift_antpos = uvd1.copy()
     uvd1_drift_antpos.unphase_to_drift(
-        phase_frame="gcrs", use_ant_pos=True, use_old_phase=True,
+        phase_frame="gcrs", use_ant_pos=True, use_old_proj=True,
     )
 
     uvd2_drift = uvd2.copy()
-    uvd2_drift.unphase_to_drift(phase_frame="gcrs", use_old_phase=True)
+    uvd2_drift.unphase_to_drift(phase_frame="gcrs", use_old_proj=True)
     uvd2_drift_antpos = uvd2.copy()
     uvd2_drift_antpos.unphase_to_drift(
-        phase_frame="gcrs", use_ant_pos=True, use_old_phase=True,
+        phase_frame="gcrs", use_ant_pos=True, use_old_proj=True,
     )
 
     # the tolerances here are empirical -- based on what was seen in the
@@ -1004,7 +1004,7 @@ def test_phasing():
         uvd1.phase_center_epoch,
         orig_phase_frame="gcrs",
         phase_frame="gcrs",
-        use_old_phase=True,
+        use_old_proj=True,
     )
     uvd2_rephase_antpos = uvd2.copy()
     uvd2_rephase_antpos.phase(
@@ -1014,7 +1014,7 @@ def test_phasing():
         orig_phase_frame="gcrs",
         phase_frame="gcrs",
         use_ant_pos=True,
-        use_old_phase=True,
+        use_old_proj=True,
     )
 
     # the tolerances here are empirical -- based on what was seen in the
@@ -1030,7 +1030,7 @@ def test_phasing():
         uvd1.phase_center_dec,
         uvd1.phase_center_epoch,
         phase_frame="gcrs",
-        use_old_phase=True,
+        use_old_proj=True,
     )
     uvd1_drift_antpos.phase(
         uvd1.phase_center_ra,
@@ -1038,7 +1038,7 @@ def test_phasing():
         uvd1.phase_center_epoch,
         phase_frame="gcrs",
         use_ant_pos=True,
-        use_old_phase=True,
+        use_old_proj=True,
     )
 
     # the tolerances here are empirical -- caused by one unphase/phase cycle.
@@ -1053,7 +1053,7 @@ def test_phasing():
         uvd2.phase_center_dec,
         uvd2.phase_center_epoch,
         phase_frame="gcrs",
-        use_old_phase=True,
+        use_old_proj=True,
     )
     uvd2_drift_antpos.phase(
         uvd2.phase_center_ra,
@@ -1061,7 +1061,7 @@ def test_phasing():
         uvd2.phase_center_epoch,
         phase_frame="gcrs",
         use_ant_pos=True,
-        use_old_phase=True,
+        use_old_proj=True,
     )
 
     # the tolerances here are empirical -- caused by one unphase/phase cycle.
@@ -4986,7 +4986,7 @@ def test_set_uvws_from_antenna_pos():
     orig_uvw_array = np.copy(uv_object.uvw_array)
 
     with pytest.raises(ValueError) as cm:
-        uv_object.set_uvws_from_antenna_positions(use_old_phase=True)
+        uv_object.set_uvws_from_antenna_positions(use_old_proj=True)
     assert str(cm.value).startswith("UVW calculation requires unphased data.")
 
     with pytest.raises(ValueError) as cm:
@@ -4998,7 +4998,7 @@ def test_set_uvws_from_antenna_pos():
             ],
         ):
             uv_object.set_uvws_from_antenna_positions(
-                allow_phasing=True, orig_phase_frame="xyz", use_old_phase=True
+                allow_phasing=True, orig_phase_frame="xyz", use_old_proj=True
             )
     assert str(cm.value).startswith("Invalid parameter orig_phase_frame.")
 
@@ -5014,23 +5014,19 @@ def test_set_uvws_from_antenna_pos():
                 allow_phasing=True,
                 orig_phase_frame="gcrs",
                 output_phase_frame="xyz",
-                use_old_phase=True,
+                use_old_proj=True,
             )
     assert str(cm.value).startswith("Invalid parameter output_phase_frame.")
 
     with uvtest.check_warnings(
-        [UserWarning, DeprecationWarning, DeprecationWarning],
-        [
-            "Data will be unphased",
-            "The original `phase` method will be deprecated in",
-            "The original `phase` method will be deprecated in",
-        ],
+        [UserWarning, DeprecationWarning],
+        ["Data will be unphased", "The original `phase` method will be deprecated in"],
     ):
         uv_object.set_uvws_from_antenna_positions(
             allow_phasing=True,
             orig_phase_frame="gcrs",
             output_phase_frame="gcrs",
-            use_old_phase=True,
+            use_old_proj=True,
         )
 
     with uvtest.check_warnings(None):
