@@ -1445,11 +1445,9 @@ def calc_uvw(
             unique_dec = np.zeros_like(unique_gha) + telescope_lat
             unique_pa = None
         else:
-            unique_gha = np.repeat(
-                (lst_array[unique_mask] - app_ra[unique_mask]) - telescope_lon, N_ants
-            )
-            unique_dec = np.repeat(app_dec[unique_mask], N_ants)
-            unique_pa = np.repeat(app_pa[unique_mask], N_ants)
+            unique_gha = (lst_array[unique_mask] - app_ra[unique_mask]) - telescope_lon
+            unique_dec = app_dec[unique_mask]
+            unique_pa = app_pa[unique_mask]
 
         # Tranpose the ant vectors so that they are in the proper shape
         ant_vectors = np.transpose(antenna_positions)[np.newaxis, :, :]
