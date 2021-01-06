@@ -799,8 +799,8 @@ class UVData(UVBase):
             else:
                 souDiffs += coord_frame is not None
 
-            if "object_epoch" in object_dict.keys():
-                souDiffs += object_dict["object_epoch"] != coord_epoch
+            if "coord_epoch" in object_dict.keys():
+                souDiffs += object_dict["coord_epoch"] != coord_epoch
             else:
                 souDiffs += coord_epoch is not None
 
@@ -1049,6 +1049,9 @@ class UVData(UVBase):
         self._phase_center_epoch.required = False
         self._phase_center_ra.required = False
         self._phase_center_dec.required = False
+        self._phase_center_app_ra.required = False
+        self._phase_center_app_dec.required = False
+        self._phase_center_app_pa.required = False
 
     def set_unknown_phase_type(self):
         """
@@ -3294,8 +3297,8 @@ class UVData(UVBase):
                     object_type,
                     object_lon=ra,
                     object_lat=dec,
-                    object_frame=phase_frame,
-                    object_epoch=epoch,
+                    coord_frame=phase_frame,
+                    coord_epoch=epoch,
                     object_pm_ra=pm_ra,
                     object_pm_dec=pm_dec,
                     object_parallax=parallax,
