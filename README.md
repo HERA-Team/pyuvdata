@@ -143,7 +143,7 @@ Required:
 
 * numpy >= 1.18
 * scipy
-* astropy >= 3.2.3
+* astropy >= 4.2
 * h5py
 * setuptools_scm
 
