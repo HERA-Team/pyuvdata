@@ -1441,8 +1441,8 @@ def calc_uvw(
             # Unphased coordinates appear to be stored in ENU coordinates -- that's
             # equivalent to calculating uvw's based on zenith. We can use that to our
             # advantage and spoof the gha and dec based on telescope lon and lat
-            unique_gha = np.zeros(N_ants) - telescope_lon
-            unique_dec = np.zeros_like(unique_gha) + telescope_lat
+            unique_gha = np.zeros(1) - telescope_lon
+            unique_dec = np.zeros(1) + telescope_lat
             unique_pa = None
         else:
             unique_gha = (lst_array[unique_mask] - app_ra[unique_mask]) - telescope_lon
@@ -1510,7 +1510,7 @@ def calc_uvw(
                 )
         # For this operation, all we need is the delta-ha coverage, which _should_ be
         # entirely encapsulated by the change in RA.
-        if app_ra is None:
+        if (app_ra is None) and (old_app_ra is None):
             gha_delta_array = 0.0
         else:
             gha_delta_array = (lst_array if from_enu else old_app_ra) - (
