@@ -4184,8 +4184,19 @@ class UVData(UVBase):
         else:
             bnew_inds, new_blts = ([], [])
             # add metadata to be checked to compatibility params
-            extra_params = ["_integration_time", "_uvw_array", "_lst_array"]
+            extra_params = [
+                "_integration_time",
+                "_uvw_array",
+                "_lst_array",
+                "_phase_center_app_ra",
+                "_phase_center_app_dec",
+                "_phase_center_app_pa",
+                "_object_id_array",
+            ]
             compatibility_params.extend(extra_params)
+
+        # TODO: Add handling for what happens when you have two different source
+        # catalogs that you want to combine
 
         # find the freq indices in "other" but not in "this"
         temp = np.nonzero(~np.in1d(other.freq_array[0, :], this.freq_array[0, :]))[0]
@@ -4239,6 +4250,30 @@ class UVData(UVBase):
                     rtol=this._lst_array.tols[0],
                     atol=this._lst_array.tols[1],
                 )
+            elif (a == "_phase_center_app_ra") and (this.phase_type == "phased"):
+                # only check that overlapping blt indices match
+                params_match = np.allclose(
+                    this.phase_center_app_ra[this_blts_ind],
+                    other.phase_center_app_ra[other_blts_ind],
+                    rtol=this._phase_center_app_ra.tols[0],
+                    atol=this._phase_center_app_ra.tols[1],
+                )
+            elif (a == "_phase_center_app_dec") and (this.phase_type == "phased"):
+                # only check that overlapping blt indices match
+                params_match = np.allclose(
+                    this.phase_center_app_dec[this_blts_ind],
+                    other.phase_center_app_dec[other_blts_ind],
+                    rtol=this._phase_center_app_dec.tols[0],
+                    atol=this._phase_center_app_dec.tols[1],
+                )
+            elif (a == "_phase_center_app_pa") and (this.phase_type == "phased"):
+                # only check that overlapping blt indices match
+                params_match = np.allclose(
+                    this.phase_center_app_pa[this_blts_ind],
+                    other.phase_center_app_pa[other_blts_ind],
+                    rtol=this._phase_center_app_pa.tols[0],
+                    atol=this._phase_center_app_pa.tols[1],
+                )
             else:
                 params_match = getattr(this, a) == getattr(other, a)
             if not params_match:
@@ -4288,6 +4323,9 @@ class UVData(UVBase):
                 )[blt_order]
                 this.phase_center_app_dec = np.concatenate(
                     [this.phase_center_app_dec, other.phase_center_app_dec[bnew_inds]]
+                )[blt_order]
+                this.phase_center_app_pa = np.concatenate(
+                    [this.phase_center_app_pa, other.phase_center_app_pa[bnew_inds]]
                 )[blt_order]
             if this.multi_object:
                 this.object_id_array = np.concatenate(
@@ -4689,7 +4727,6 @@ class UVData(UVBase):
         compatibility_params = [
             "_vis_units",
             "_channel_width",
-            "_object_name",
             "_telescope_name",
             "_instrument",
             "_telescope_location",
@@ -4701,7 +4738,13 @@ class UVData(UVBase):
             "_phase_center_ra",
             "_phase_center_dec",
             "_phase_center_epoch",
+            "_multi_object",
+            "_object_dict",
+            "_Nobjects",
         ]
+
+        if not this.multi_object:
+            compatibility_params += ["_object_name"]
 
         history_update_string = " Combined data along "
 
@@ -4714,6 +4757,7 @@ class UVData(UVBase):
                 "_integration_time",
                 "_uvw_array",
                 "_lst_array",
+                "_object_id_array",
             ]
         elif axis == "polarization":
             history_update_string += "polarization"
@@ -4724,6 +4768,7 @@ class UVData(UVBase):
                 "_integration_time",
                 "_uvw_array",
                 "_lst_array",
+                "_object_id_array",
             ]
         elif axis == "blt":
             history_update_string += "baseline-time"
@@ -4849,6 +4894,14 @@ class UVData(UVBase):
                 this.phase_center_app_dec = np.concatenate(
                     [this.phase_center_app_dec]
                     + [obj.phase_center_app_dec for obj in other]
+                )
+                this.phase_center_app_pa = np.concatenate(
+                    [this.phase_center_app_pa]
+                    + [obj.phase_center_app_pa for obj in other]
+                )
+            if this.multi_object:
+                this.object_id_array = np.concatenate(
+                    [this.object_id_array] + [obj.object_id_array for obj in other]
                 )
 
         # Check final object is self-consistent
