@@ -4,7 +4,7 @@ channels:
   - defaults
 dependencies:
   - aipy
-  - astropy
+  - astropy>=4.2
   - astropy-healpix
   - cached-property
   - h5py
