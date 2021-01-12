@@ -70,7 +70,8 @@ class UVData(UVBase):
 
         desc = (
             "Array of the visibility data, shape: (Nblts, 1, Nfreqs, "
-            "Npols), type = complex float, in units of self.vis_units"
+            "Npols) or (Nblts, Nfreqs, Npols) if future_array_shapes=True, "
+            "type = complex float, in units of self.vis_units"
         )
         # TODO: Spw axis to be collapsed in future release
         self._data_array = uvp.UVParameter(
@@ -122,9 +123,7 @@ class UVData(UVBase):
         self._Nspws = uvp.UVParameter(
             "Nspws",
             description="Number of spectral windows "
-            "(ie non-contiguous spectral chunks). "
-            "More than one spectral window is not "
-            "currently supported.",
+            "(ie non-contiguous spectral chunks). ",
             expected_type=int,
         )
 
@@ -194,7 +193,7 @@ class UVData(UVBase):
         # to have different dimensions
         desc = (
             "Array of frequencies, center of the channel, "
-            "shape (1, Nfreqs), units Hz"
+            "shape (1, Nfreqs) or (Nfreqs,) if future_array_shapes=True, units Hz"
         )
         # TODO: Spw axis to be collapsed in future release
         self._freq_array = uvp.UVParameter(
@@ -245,7 +244,8 @@ class UVData(UVBase):
         )  # 1 ms
 
         desc = (
-            "Width of frequency channels (Hz). If flex_spw = False, then it is a "
+            "Width of frequency channels (Hz). If flex_spw = False and "
+            "future_array_shapes=False, then it is a "
             "single value of type = float, otherwise it is an array of shape "
             "(Nfreqs), type = float."
         )
@@ -726,7 +726,10 @@ class UVData(UVBase):
 
         self.freq_array = self.freq_array[0, :]
 
-        self.channel_width = np.zeros(self.Nfreqs, dtype=np.float) + self.channel_width
+        if not self.flex_spw:
+            self.channel_width = (
+                np.zeros(self.Nfreqs, dtype=np.float) + self.channel_width
+            )
 
     def use_current_array_shapes(self):
         """
@@ -735,7 +738,7 @@ class UVData(UVBase):
         This method sets allows users to convert back to the current array shapes.
         This method sets the `future_array_shapes` parameter on this object to False.
         """
-        if self.Nspws == 1:
+        if not self.flex_spw:
             unique_channel_widths = np.unique(self.channel_width)
             if unique_channel_widths.size > 1:
                 raise ValueError(
@@ -3274,7 +3277,7 @@ class UVData(UVBase):
             "_phase_center_dec",
             "_phase_center_epoch",
         ]
-        if not this.future_array_shapes:
+        if not this.future_array_shapes and not this.flex_spw:
             compatibility_params.append("_channel_width")
 
         # Build up history string
@@ -3411,8 +3414,13 @@ class UVData(UVBase):
 
         # if channel width is an array and there's any overlap in freqs,
         # check extra params
-        if this.future_array_shapes or this.Nspws > 1:
-            temp = np.nonzero(np.in1d(other.freq_array, this.freq_array))[0]
+        if this.future_array_shapes or this.flex_spw:
+            if this.future_array_shapes:
+                temp = np.nonzero(np.in1d(other.freq_array, this.freq_array))[0]
+            else:
+                temp = np.nonzero(
+                    np.in1d(other.freq_array[0, :], this.freq_array[0, :])
+                )[0]
             if len(temp) > 0:
                 # add metadata to be checked to compatibility params
                 extra_params = ["_channel_width"]
@@ -3433,8 +3441,8 @@ class UVData(UVBase):
             pnew_inds = []
 
         # Actually check compatibility parameters
-        for a in compatibility_params:
-            if a == "_integration_time":
+        for cp in compatibility_params:
+            if cp == "_integration_time":
                 # only check that overlapping blt indices match
                 params_match = np.allclose(
                     this.integration_time[this_blts_ind],
@@ -3442,7 +3450,7 @@ class UVData(UVBase):
                     rtol=this._integration_time.tols[0],
                     atol=this._integration_time.tols[1],
                 )
-            elif a == "_uvw_array":
+            elif cp == "_uvw_array":
                 # only check that overlapping blt indices match
                 params_match = np.allclose(
                     this.uvw_array[this_blts_ind, :],
@@ -3450,7 +3458,7 @@ class UVData(UVBase):
                     rtol=this._uvw_array.tols[0],
                     atol=this._uvw_array.tols[1],
                 )
-            elif a == "_lst_array":
+            elif cp == "_lst_array":
                 # only check that overlapping blt indices match
                 params_match = np.allclose(
                     this.lst_array[this_blts_ind],
@@ -3458,7 +3466,7 @@ class UVData(UVBase):
                     rtol=this._lst_array.tols[0],
                     atol=this._lst_array.tols[1],
                 )
-            elif a == "_channel_width" and this.future_array_shapes:
+            elif cp == "_channel_width" and this.future_array_shapes or this.flex_spw:
                 # only check that overlapping freq indices match
                 params_match = np.allclose(
                     this.channel_width[this_freq_ind],
@@ -3467,10 +3475,10 @@ class UVData(UVBase):
                     atol=this._channel_width.tols[1],
                 )
             else:
-                params_match = getattr(this, a) == getattr(other, a)
+                params_match = getattr(this, cp) == getattr(other, cp)
             if not params_match:
                 msg = (
-                    "UVParameter " + a[1:] + " does not match. Cannot combine objects."
+                    "UVParameter " + cp[1:] + " does not match. Cannot combine objects."
                 )
                 raise ValueError(msg)
 
@@ -3522,6 +3530,10 @@ class UVData(UVBase):
                 )
                 f_order = np.argsort(this.freq_array)
             else:
+                if this.flex_spw:
+                    this.channel_width = np.concatenate(
+                        [this.channel_width, other.channel_width[fnew_inds]]
+                    )
                 this.freq_array = np.concatenate(
                     [this.freq_array, other.freq_array[:, fnew_inds]], axis=1
                 )
@@ -4014,7 +4026,7 @@ class UVData(UVBase):
             "_phase_center_dec",
             "_phase_center_epoch",
         ]
-        if not this.future_array_shapes:
+        if not this.future_array_shapes and not this.flex_spw:
             compatibility_params.append("_channel_width")
 
         history_update_string = " Combined data along "
@@ -4071,6 +4083,10 @@ class UVData(UVBase):
                 )
                 this.Nfreqs = sum([this.Nfreqs] + [obj.Nfreqs for obj in other])
             else:
+                if this.flex_spw:
+                    this.channel_width = np.concatenate(
+                        [this.channel_width] + [obj.channel_width for obj in other]
+                    )
                 this.freq_array = np.concatenate(
                     [this.freq_array] + [obj.freq_array for obj in other], axis=1
                 )
@@ -4958,6 +4974,8 @@ class UVData(UVBase):
                 self.freq_array = self.freq_array[freq_inds]
                 self.channel_width = self.channel_width[freq_inds]
             else:
+                if self.flex_spw:
+                    self.channel_width = self.channel_width[freq_inds]
                 self.freq_array = self.freq_array[:, freq_inds]
 
         if pol_inds is not None:

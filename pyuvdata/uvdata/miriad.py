@@ -1530,10 +1530,7 @@ class Miriad(UVData):
 
             # Need the array direction here since channel_width is always supposed
             # to be > 0, but channels can be in decending freq order
-            if self.future_array_shapes:
-                freq_dir = np.sign(np.diff(freq_array_use[([0, -1])]))
-            else:
-                freq_dir = np.sign(np.diff(freq_array_use[([0, -1])]))
+            freq_dir = np.sign(np.diff(freq_array_use[([0, -1])]))
 
             uv.add_var("sfreq", "d")  # Freq of first channel of the window, in GHz
             uv["sfreq"] = (freq_array_use[0] / 1e9).astype(np.double)  # Hz -> GHz

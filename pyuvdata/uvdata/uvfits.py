@@ -465,7 +465,7 @@ class UVFITS(UVData):
             self.Nblts = vis_hdr.pop("GCOUNT")
 
             if self.Nspws > 1:
-                # If this is multi-spw, use the 'flexibile' spectral window setup
+                # If this is multi-spw, use the 'flexible' spectral window setup
                 self._set_flex_spw()
                 uvfits_nchan = vis_hdr.pop("NAXIS4")
                 self.Nfreqs = uvfits_nchan * self.Nspws
