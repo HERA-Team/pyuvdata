@@ -620,6 +620,7 @@ def test_remove_dig_gains():
     uv2.data_array = uv2.data_array / (dig_gains1 * dig_gains2)
     uv2.history = uv1.history
 
+    assert "Divided out digital gains" in uv1.history
     assert uv1 == uv2
 
 
@@ -645,6 +646,7 @@ def test_remove_coarse_band():
     uv2.data_array = uv2.data_array.swapaxes(2, 3)
     uv2.history = uv1.history
 
+    assert "Divided out coarse channel bandpass" in uv1.history
     assert uv1 == uv2
 
 

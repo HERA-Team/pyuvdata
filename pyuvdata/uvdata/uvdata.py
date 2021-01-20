@@ -6465,7 +6465,8 @@ class UVData(UVBase):
             vleck correction with a chebyshev polynomial approximation.
         flag_small_sig_ants : bool
             Only used if correct_van_vleck is True. Option to completely flag any
-            antenna that has a sigma < 0.5. If set to False, only the times and
+            antenna that has a sigma < 0.5, as sigmas in this range generally
+            indicate bad data. If set to False, only the times and
             frequencies at which sigma < 0.5 will be flagged for the antenna.
         propagate_coarse_flags : bool
             Option to propagate flags for missing coarse channel integrations
@@ -6495,8 +6496,8 @@ class UVData(UVBase):
             'mwa_corr_fits'.
         remove_flagged_ants : bool
             Option to perform a select to remove antennas flagged in the metafits
-            file. If flag_small_sig_ants is True then antennas flagged by the Van
-            Vleck correction are also removed.
+            file. If correct_van_vleck and flag_small_sig_ants are both True then
+            antennas flagged by the Van Vleck correction are also removed.
         phase_to_pointing_center : bool
             Option to phase to the observation pointing center.
         read_data : bool
@@ -7129,7 +7130,8 @@ class UVData(UVBase):
             approximation. Set to False to run the integral version of the correction.
         flag_small_sig_ants : bool
             Only used if correct_van_vleck is True. Option to completely flag any
-            antenna that has a sigma < 0.5. If set to False, only the times and
+            antenna that has a sigma < 0.5, as sigmas in this range generally
+            indicate bad data. If set to False, only the times and
             frequencies at which sigma < 0.5 will be flagged for the antenna.
             Only used if file_type is 'mwa_corr_fits'.
         propogate_coarse_flags : bool
@@ -7163,9 +7165,9 @@ class UVData(UVBase):
             used if file_type is 'mwa_corr_fits'.
         remove_flagged_ants : bool
             Option to perform a select to remove antennas flagged in the metafits
-            file. If flag_small_sig_ants is True then antennas flagged by the Van
-            Vleck correction are also removed. Only used if file_type is
-            'mwa_corr_fits'.
+            file. If correct_van_vleck and flag_small_sig_ants are both True then
+            antennas flagged by the Van Vleck correction are also removed.
+            Only used if file_type is 'mwa_corr_fits'.
         phase_to_pointing_center : bool
             Flag to phase to the pointing center. Only used if file_type is
             'mwa_corr_fits'. Cannot be set if phase_center_radec is not None.

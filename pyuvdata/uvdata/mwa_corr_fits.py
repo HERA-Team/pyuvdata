@@ -502,6 +502,7 @@ class MWACorrFITS(UVData):
         )
         if flag_small_sig_ants:
             # find antenna indices for small sig ants and add to flagged_ants
+            # nonzero sigmas below 0.5 generally indicate bad data
             ant_inds = np.unique(np.nonzero(small_sig_flags)[0])
             ant_inds = ant_inds[~np.in1d(ant_inds, flagged_ants)]
             if len(ant_inds) != 0:
@@ -748,7 +749,8 @@ class MWACorrFITS(UVData):
             vleck correction with a chebyshev polynomial approximation.
         flag_small_sig_ants : bool
             Only used if correct_van_vleck is True. Option to completely flag any
-            antenna that has a sigma < 0.5. If set to False, only the times and
+            antenna that has a sigma < 0.5, as sigmas in this range generally
+            indicate bad data. If set to False, only the times and
             frequencies at which sigma < 0.5 will be flagged for the antenna.
         phase_to_pointing_center : bool
             Option to phase to the observation pointing center.
@@ -779,8 +781,8 @@ class MWACorrFITS(UVData):
             channel of each coarse channel.
         remove_flagged_ants : bool
             Option to perform a select to remove antennas flagged in the metafits
-            file. If flag_small_sig_ants is True then antennas flagged by the Van
-            Vleck correction are also removed.
+            file. If correct_van_vleck and flag_small_sig_ants are both True then
+            antennas flagged by the Van Vleck correction are also removed.
         background_lsts : bool
             When set to True, the lst_array is calculated in a background thread.
         read_data : bool
@@ -1368,7 +1370,7 @@ class MWACorrFITS(UVData):
             # reorder polarizations
             # reorder pols calls check so must come after
             # lst thread is re-joined.
-            self.reorder_pols()
+            self.reorder_pols(run_check=False)
 
         # remove bad antennas or flag bad ants
         # select must be called after lst thread is re-joined
@@ -1391,13 +1393,11 @@ class MWACorrFITS(UVData):
         if phase_to_pointing_center:
             self.phase(ra_rad, dec_rad)
 
-        if not self.metadata_only:
-
-            # check if object is self-consistent
-            # uvws are calcuated using pyuvdata, so turn off the check for speed.
-            if run_check:
-                self.check(
-                    check_extra=check_extra,
-                    run_check_acceptability=run_check_acceptability,
-                    strict_uvw_antpos_check=strict_uvw_antpos_check,
-                )
+        # check if object is self-consistent
+        # uvws are calcuated using pyuvdata, so turn off the check for speed.
+        if run_check:
+            self.check(
+                check_extra=check_extra,
+                run_check_acceptability=run_check_acceptability,
+                strict_uvw_antpos_check=strict_uvw_antpos_check,
+            )
