@@ -403,7 +403,12 @@ def test_flag_nsample_basic():
     Test that the flag(without flag_int) and nsample arrays correctly reflect data.
     """
     uv = UVData()
-    uv.read_mwa_corr_fits(filelist[0:3], flag_init=False, propagate_coarse_flags=False, remove_flagged_ants=False)
+    uv.read_mwa_corr_fits(
+        filelist[0:3],
+        flag_init=False,
+        propagate_coarse_flags=False,
+        remove_flagged_ants=False,
+    )
     # check that only bad antennas are flagged for all times, freqs, pols
     bad_ants = [59, 114]
     good_ants = list(range(128))
