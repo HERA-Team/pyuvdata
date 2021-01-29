@@ -59,6 +59,51 @@ def _check_uvh5_dtype(dtype):
     return
 
 
+def _get_dset_shape(dset, indices):
+    """
+    Given a 3-tuple of indices, determine the indexed array shape.
+
+    Parameters
+    ----------
+    dset : h5py dataset
+        A reference to an HDF5 dataset on disk.
+    indices : tuple
+        A 3-tuple with the indices to extract along each dimension of dset.
+        Each element should contain a list of indices, a slice element,
+        or a list of slice elements that will be concatenated after slicing.
+        For data arrays with 4 dimensions, the second dimension (the old spw axis)
+        should not be included because it can only be length one.
+
+    Returns
+    -------
+    tuple
+        a 3- or 4-tuple with the shape of the indexed array
+    tuple
+        a 3- or 4-tuple with indices used (will be different than input if dset has
+        4 dimensions)
+    """
+    dset_shape = list(dset.shape)
+    if len(dset_shape) == 4 and len(indices) == 3:
+        indices = (indices[0], np.s_[:], indices[1], indices[2])
+
+    for i, inds in enumerate(indices):
+        # check for integer
+        if isinstance(inds, (int, np.integer)):
+            dset_shape[i] = 1
+        # check for slice object
+        if isinstance(inds, slice):
+            dset_shape[i] = _get_slice_len(inds, dset_shape[i])
+        # check for list
+        if isinstance(inds, list):
+            # check for list of integers
+            if isinstance(inds[0], (int, np.integer)):
+                dset_shape[i] = len(inds)
+            elif isinstance(inds[0], slice):
+                dset_shape[i] = sum((_get_slice_len(s, dset_shape[i]) for s in inds))
+
+    return dset_shape, indices
+
+
 def _read_complex_astype(dset, indices, dtype_out=np.complex64):
     """
     Read the given data set of a specified type to floating point complex data.
@@ -252,51 +297,6 @@ def _get_slice_len(s, axlen):
         step = s.step
 
     return ((stop - 1 - start) // step) + 1
-
-
-def _get_dset_shape(dset, indices):
-    """
-    Given a 3-tuple of indices, determine the indexed array shape.
-
-    Parameters
-    ----------
-    dset : h5py dataset
-        A reference to an HDF5 dataset on disk.
-    indices : tuple
-        A 3-tuple with the indices to extract along each dimension of dset.
-        Each element should contain a list of indices, a slice element,
-        or a list of slice elements that will be concatenated after slicing.
-        For data arrays with 4 dimensions, the second dimension (the old spw axis)
-        should not be included because it can only be length one.
-
-    Returns
-    -------
-    tuple
-        a 3- or 4-tuple with the shape of the indexed array
-    tuple
-        a 3- or 4-tuple with indices used (will be different than input if dset has
-        4 dimensions)
-    """
-    dset_shape = list(dset.shape)
-    if len(dset_shape) == 4 and len(indices) == 3:
-        indices = (indices[0], np.s_[:], indices[1], indices[2])
-
-    for i, inds in enumerate(indices):
-        # check for integer
-        if isinstance(inds, (int, np.integer)):
-            dset_shape[i] = 1
-        # check for slice object
-        if isinstance(inds, slice):
-            dset_shape[i] = _get_slice_len(inds, dset_shape[i])
-        # check for list
-        if isinstance(inds, list):
-            # check for list of integers
-            if isinstance(inds[0], (int, np.integer)):
-                dset_shape[i] = len(inds)
-            elif isinstance(inds[0], slice):
-                dset_shape[i] = sum((_get_slice_len(s, dset_shape[i]) for s in inds))
-
-    return dset_shape, indices
 
 
 def _index_dset(dset, indices):
@@ -565,7 +565,14 @@ class UVH5(UVData):
         self.spw_array = header["spw_array"][:]
 
         if self.freq_array.ndim == 1:
-            assert np.asarray(header["channel_width"]).size == self.freq_array.size
+            arr_shape_msg = (
+                "The size of arrays in this file are not internally consistent, "
+                "which should not happen. Please file an issue in our GitHub issue "
+                "log so that we can fix it."
+            )
+            assert (
+                np.asarray(header["channel_width"]).size == self.freq_array.size
+            ), arr_shape_msg
             self._set_future_array_shapes()
 
         # Pull in the channel_width parameter as either an array or as a single float,
@@ -681,9 +688,15 @@ class UVH5(UVData):
 
         min_frac = np.min([blt_frac, freq_frac, pol_frac])
 
+        arr_shape_msg = (
+            "The size of arrays in this file are not internally consistent, "
+            "which should not happen. Please file an issue in our GitHub issue "
+            "log so that we can fix it."
+        )
+
         if dgrp["visdata"].ndim == 3:
-            assert self.freq_array.ndim == 1
-            assert self.channel_width.size == self.freq_array.size
+            assert self.freq_array.ndim == 1, arr_shape_msg
+            assert self.channel_width.size == self.freq_array.size, arr_shape_msg
             self._set_future_array_shapes()
 
         # get the fundamental datatype of the visdata; if integers, we need to
@@ -893,8 +906,8 @@ class UVH5(UVData):
             self.nsample_array = nsamples
 
         if self.data_array.ndim == 3:
-            assert self.freq_array.ndim == 1
-            assert self.channel_width.size == self.freq_array.size
+            assert self.freq_array.ndim == 1, arr_shape_msg
+            assert self.channel_width.size == self.freq_array.size, arr_shape_msg
             self._set_future_array_shapes()
 
         # check if object has all required UVParameters set
