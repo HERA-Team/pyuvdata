@@ -32,7 +32,7 @@ cdef numpy.float64_t b_div_a2 = (_gps_b / _gps_a)**2
 @cython.boundscheck(False)
 @cython.wraparound(False)
 cpdef tuple baseline_to_antnums(numpy.ndarray[ndim=1, dtype=numpy.int64_t] baseline):
-  cdef unsigned long n = baseline.size
+  cdef long n = baseline.size
   cdef numpy.ndarray[ndim=1, dtype=numpy.int64_t] ant1 = np.empty(n, dtype=np.int64)
   cdef numpy.ndarray[ndim=1, dtype=numpy.int64_t] ant2 = np.empty(n, dtype=np.int64)
   cdef long _min = baseline.min()
@@ -58,7 +58,7 @@ cdef numpy.ndarray[dtype=numpy.int64_t] _antnum_to_bl_2048(
 numpy.int64_t[::1] ant1,
 numpy.int64_t[::1] ant2,
 ):
-  cdef unsigned long n = ant1.shape[0]
+  cdef long n = ant1.shape[0]
   cdef Py_ssize_t i
   cdef numpy.ndarray[ndim=1, dtype=numpy.int64_t] baselines = np.empty(n, dtype=np.int64)
   # make views as c-contiguous arrays of a known dtype
@@ -76,7 +76,7 @@ cdef numpy.ndarray[dtype=numpy.int64_t] _antnum_to_bl_256(
 numpy.int64_t[::1] ant1,
 numpy.int64_t[::1] ant2,
 ):
-  cdef unsigned long n = ant1.shape[0]
+  cdef long n = ant1.shape[0]
   cdef Py_ssize_t i
   cdef numpy.ndarray[dtype=numpy.int64_t, ndim=1] baselines = np.empty(n, dtype=np.int64)
   # make views as c-contiguous arrays of a known dtype
