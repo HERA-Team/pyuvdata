@@ -105,13 +105,7 @@ cdef inline void CHK_IO(int i) except *:
   if (i != 0):
     raise IOError("IO failed.")
 
-class MiriadError(RuntimeError):
-  pass
-
-cdef int raise_miriad_error() except *:
-  raise MiriadError()
-
-cpdef hdaccess(int item_hdl) except +raise_miriad_error:
+cpdef hdaccess(int item_hdl) except +:
   cdef int iostat
   hdaccess_c(item_hdl, &iostat)
   return
@@ -123,7 +117,7 @@ cdef INIT(item_hdl, char type_item[4], size):
   offset = mroundup(ITEM_HDR_SIZE, size)
   return offset
 
-cpdef hwrite_init(int item_hdl, str type) except +raise_miriad_error:
+cpdef hwrite_init(int item_hdl, str type) except +:
   cdef int offset
 
   if type[0] == "a":
@@ -158,7 +152,7 @@ cpdef hwrite_init(int item_hdl, str type) except +raise_miriad_error:
 cdef FIRSTINT(char s[4]):
   return (<int *>s)[0]
 
-cpdef hread_init(int item_hdl) except +raise_miriad_error:
+cpdef hread_init(int item_hdl) except +:
   cdef int offset, iostat, code
   cdef char s[ITEM_HDR_SIZE]
 
@@ -198,7 +192,7 @@ cpdef hread_init(int item_hdl) except +raise_miriad_error:
   else:
     raise RuntimeError("unknown item type.")
 
-cpdef hwrite(int item_hdl, int offset, val, str type) except +raise_miriad_error:
+cpdef hwrite(int item_hdl, int offset, val, str type) except +:
   cdef int iostat
   cdef int int_1
   cdef long lg
@@ -274,7 +268,7 @@ cpdef hwrite(int item_hdl, int offset, val, str type) except +raise_miriad_error
 
   return offset
 
-cpdef hread(int item_hdl, int offset, str type) except +raise_miriad_error:
+cpdef hread(int item_hdl, int offset, str type) except +:
   cdef int iostat
   cdef int int_1
   cdef short sh
@@ -420,7 +414,7 @@ cdef class UV:
     self.curtime = -1
     return
 
-  cpdef raw_read(self, int n2read) except +raise_miriad_error:
+  cpdef raw_read(self, int n2read) except +:
     cdef int nread, i, j
     cdef double preamble[PREAMBLE_SIZE]
     cdef numpy.ndarray[numpy.complex64_t , ndim=1] data = np.zeros((n2read,), dtype=np.complex64)
@@ -474,7 +468,7 @@ cdef class UV:
     uvtrack_c(self.tno, name.encode(), switches.encode())
     return
 
-  cpdef _rdvr(self, str name, str type) except +raise_miriad_error:
+  cpdef _rdvr(self, str name, str type) except +:
     cdef char value[MAXVAR]
     cdef int length, updated, elem_size
 
@@ -516,7 +510,7 @@ cdef class UV:
 
     return
 
-  cpdef _wrvr(self, str name, str type, value) except +raise_miriad_error:
+  cpdef _wrvr(self, str name, str type, value) except +:
     cdef char c_value[MAXVAR]
     cdef char *st
     if isinstance(value, np.ndarray):
@@ -554,7 +548,7 @@ cdef class UV:
 
     return
 
-  cpdef _select(self, str name, numpy.float64_t ind1, numpy.float64_t ind2, int include_flag) except +raise_miriad_error:
+  cpdef _select(self, str name, numpy.float64_t ind1, numpy.float64_t ind2, int include_flag) except +:
     # we used to only call strncmp(name, decimation, 5) so only look at first 5 letters
     if strcmp(name[:5].encode(), "decimation"[:5]) == 0:
       self.decimate = <long> ind1
@@ -564,7 +558,7 @@ cdef class UV:
 
     return
 
-  cpdef haccess(self, str name, str mode) except +raise_miriad_error:
+  cpdef haccess(self, str name, str mode) except +:
     cdef int item_hdl, iostat
     haccess_c(self.tno, &item_hdl, name.encode(), mode.encode(), &iostat)
     CHK_IO(iostat)
