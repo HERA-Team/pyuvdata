@@ -67,19 +67,17 @@ cdef extern from "miriad.h":
   void hwritec_c(int item, float buf[2], int offset, int length, int *iostat)
   void hreadc_c(int item, float buf[2], int offset, int length, int *iostat)
 
-# 4 is the ITEM_HDR_SIZE in both miriad3 and 4 but cython does
-# not like using it as the length of the array size it needs to be static
-# and not defined at compile time.
 cdef extern from "io.h":
-  cdef int ITEM_HDR_SIZE "ITEM_HDR_SIZE"
-  cdef char binary_item[4]
-  cdef char real_item[4]
-  cdef char int_item[4]
-  cdef char int2_item[4]
-  cdef char int8_item[4]
-  cdef char char_item[4]
-  cdef char dble_item[4]
-  cdef char cmplx_item[4]
+  cdef const int ITEM_HDR_SIZE "ITEM_HDR_SIZE"
+  cdef char binary_item[ITEM_HDR_SIZE]
+  cdef char real_item[ITEM_HDR_SIZE]
+  cdef char int_item[ITEM_HDR_SIZE]
+  cdef char int2_item[ITEM_HDR_SIZE]
+  cdef char int8_item[ITEM_HDR_SIZE]
+  cdef char char_item[ITEM_HDR_SIZE]
+  cdef char dble_item[ITEM_HDR_SIZE]
+  cdef char cmplx_item[ITEM_HDR_SIZE]
+
 
 cdef extern from "hio.h":
   int mroundup(int a, int b)
@@ -162,7 +160,7 @@ cdef FIRSTINT(char s[4]):
 
 cpdef hread_init(int item_hdl) except +raise_miriad_error:
   cdef int offset, iostat, code
-  cdef char s[4] # ITEM_HDR_SIZE
+  cdef char s[ITEM_HDR_SIZE]
 
   hreadb_c(item_hdl, s, 0, ITEM_HDR_SIZE, &iostat)
 
@@ -478,7 +476,7 @@ cdef class UV:
     return
 
   cpdef _rdvr(self, str name, str type) except +raise_miriad_error:
-    cdef char value[32768]  # MAXVAR
+    cdef char value[MAXVAR]
     cdef int length, updated, elem_size
 
     uvprobvr_c(self.tno, name.encode(), value, &length, &updated)
@@ -520,7 +518,7 @@ cdef class UV:
     return
 
   cpdef _wrvr(self, str name, str type, value) except +raise_miriad_error:
-    cdef char c_value[32768]  # MAXVAR
+    cdef char c_value[MAXVAR]
     cdef char *st
     if isinstance(value, np.ndarray):
       if value.ndim != 1:
