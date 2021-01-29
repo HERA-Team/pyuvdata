@@ -352,35 +352,35 @@ cdef class UV:
     self.close()
     return
 
-  cdef numpy.ndarray[dtype=int, ndim=1] _get_j_type(self, int htype, char *name, int length):
+  cdef _get_j_type(self, int htype, char *name, int length):
     cdef numpy.ndarray[dtype=int, ndim=1] arr = np.zeros((length,), dtype=np.int16)
     uvgetvr_c(self.tno, htype, name, <char *>&arr[0], length)
     if length == 1:
       return arr.item(0)
     return arr
 
-  cdef numpy.ndarray[dtype=numpy.int32_t, ndim=1] _get_i_type(self, int htype, char *name, int length):
+  cdef _get_i_type(self, int htype, char *name, int length):
     cdef numpy.ndarray[dtype=numpy.int32_t, ndim=1] arr = np.zeros((length,), dtype=np.int32)
     uvgetvr_c(self.tno, htype, name, <char *>&arr[0], length)
     if length == 1:
       return arr.item(0)
     return arr
 
-  cdef numpy.ndarray[dtype=DTYPE_f64, ndim=1] _get_d_type(self, int htype, char *name, int length):
+  cdef _get_d_type(self, int htype, char *name, int length):
     cdef numpy.ndarray[dtype=DTYPE_f64, ndim=1] arr = np.zeros((length,), dtype=np.float64)
     uvgetvr_c(self.tno, htype, name, <char *>&arr[0], length)
     if length == 1:
       return arr.item(0)
     return arr
 
-  cdef numpy.ndarray[dtype=numpy.float32_t, ndim=1] _get_r_type(self, int htype, char *name, int length):
+  cdef _get_r_type(self, int htype, char *name, int length):
     cdef numpy.ndarray[dtype=numpy.float32_t, ndim=1] arr = np.zeros((length,), dtype=np.float32)
     uvgetvr_c(self.tno, htype, name, <char *>&arr[0], length)
     if length == 1:
       return arr.item(0)
     return arr
 
-  cdef numpy.ndarray[dtype=DTYPE_c, ndim=1] _get_c_type(self, int htype, char *name, int length):
+  cdef _get_c_type(self, int htype, char *name, int length):
     cdef numpy.ndarray[dtype=DTYPE_c, ndim=1] arr = np.zeros((length,), dtype=np.complex64)
     uvgetvr_c(self.tno, htype, name, <char *>&arr[0], length)
     if length == 1:
