@@ -151,7 +151,7 @@ cpdef int hwrite_init(int item_hdl, str type) except +:
 cdef int FIRSTINT(char s[4]):
   return (<int *>s)[0]
 
-cpdef int hread_init(int item_hdl) except +:
+cpdef hread_init(int item_hdl) except +:
   cdef int offset, iostat, code
   cdef char s[ITEM_HDR_SIZE]
 
