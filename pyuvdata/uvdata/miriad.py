@@ -823,10 +823,11 @@ class Miriad(UVData):
         # select on ant_str if provided
         if ant_str is not None:
             # type check
-            assert isinstance(ant_str, (str, np.str)), "ant_str must be fed as a string"
-            assert (
-                antenna_nums is None and bls is None
-            ), "ant_str must be None if antenna_nums or bls is not None"
+            if not isinstance(ant_str, (str, np.str)):
+                raise ValueError("ant_str must be a string")
+            if antenna_nums is not None or bls is not None:
+                raise ValueError("Cannot provide ant_str with antenna_nums or bls")
+
             aipy_extracts.uv_selector(uv, ant_str)
             if ant_str != "all":
                 history_update_string += "antenna pairs"
@@ -837,11 +838,11 @@ class Miriad(UVData):
             antpair_str = ""
             if antenna_nums is not None:
                 # type check
-                err_msg = (
-                    "antenna_nums must be fed as a list of antenna number integers"
-                )
-                assert isinstance(antenna_nums, (np.ndarray, list)), err_msg
-                assert isinstance(antenna_nums[0], (int, np.integer)), err_msg
+                err_msg = "antenna_nums must be a list of antenna number integers"
+                if not isinstance(antenna_nums, (np.ndarray, list)):
+                    raise ValueError(err_msg)
+                if not isinstance(antenna_nums[0], (int, np.integer)):
+                    raise ValueError(err_msg)
                 # get all possible combinations
                 antpairs = list(
                     itertools.combinations_with_replacement(antenna_nums, 2)
@@ -923,11 +924,14 @@ class Miriad(UVData):
                 "time_range must be a len-2 list of Julian Date floats, "
                 "Ex: [2458115.2, 2458115.6]"
             )
-            assert isinstance(time_range, (list, np.ndarray)), err_msg
-            assert len(time_range) == 2, err_msg
-            assert np.array(
+            if not isinstance(time_range, (list, np.ndarray)):
+                raise ValueError(err_msg)
+            if len(time_range) != 2:
+                raise ValueError(err_msg)
+            if not np.array(
                 [isinstance(t, (float, np.float, np.float64)) for t in time_range]
-            ).all(), err_msg
+            ).all():
+                raise ValueError(err_msg)
 
             # UVData.time_array marks center of integration, while Miriad
             # 'time' marks beginning
@@ -949,13 +953,15 @@ class Miriad(UVData):
                 "pols must be a list of polarization strings or ints, "
                 "Ex: ['xx', ...] or [-5, ...]"
             )
-            assert isinstance(polarizations, (list, np.ndarray)), err_msg
-            assert np.array(
+            if not isinstance(polarizations, (list, np.ndarray)):
+                raise ValueError(err_msg)
+            if not np.array(
                 map(
                     lambda p: isinstance(p, (str, np.str, int, np.integer)),
                     polarizations,
                 )
-            ).all(), err_msg
+            ).all():
+                raise ValueError(err_msg)
             # convert to pol integer if string
             polarizations = [
                 p
@@ -970,10 +976,9 @@ class Miriad(UVData):
                     uv.select("polarization", p, p, include=False)
                 else:
                     pol_list.append(p)
-            # assert not empty
-            assert len(pol_list) > 0, "No polarizations in data matched {}".format(
-                polarizations
-            )
+            # check not empty
+            if len(pol_list) == 0:
+                raise ValueError(f"No polarizations in data matched {polarizations}")
             if n_selects > 0:
                 history_update_string += ", polarizations"
             else:
@@ -1757,6 +1762,8 @@ class Miriad(UVData):
                 else:
                     data = self.data_array[viscnt, 0, :, polcnt]
                     flags = self.flag_array[viscnt, 0, :, polcnt]
+                # Using an assert here because it should be guaranteed by an earlier
+                # method call.
                 assert j >= i, (
                     "Miriad requires ant1<ant2 which should be "
                     "guaranteed by prior conjugate_bls call"

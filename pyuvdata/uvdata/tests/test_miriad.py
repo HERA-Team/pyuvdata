@@ -1045,9 +1045,9 @@ def test_read_write_read_miriad_partial_ant_str(uv_in_paper, tmp_path):
     "err_type,select_kwargs,err_msg",
     [
         (
-            AssertionError,
+            ValueError,
             {"ant_str": "auto", "antenna_nums": [0, 1]},
-            "ant_str must be None if antenna_nums or bls is not None",
+            "Cannot provide ant_str with antenna_nums or bls",
         ),
         (ValueError, {"bls": "foo"}, "bls must be a list of tuples of antenna numbers"),
         (
@@ -1081,12 +1081,12 @@ def test_read_write_read_miriad_partial_ant_str(uv_in_paper, tmp_path):
             "Cannot provide length-3 tuples and also specify polarizations.",
         ),
         (
-            AssertionError,
+            ValueError,
             {"antenna_nums": np.array([(0, 10)])},
-            "antenna_nums must be fed as a list of antenna number integers",
+            "antenna_nums must be a list of antenna number integers",
         ),
         (
-            AssertionError,
+            ValueError,
             {"polarizations": "xx"},
             "pols must be a list of polarization strings or ints",
         ),
@@ -1096,17 +1096,17 @@ def test_read_write_read_miriad_partial_ant_str(uv_in_paper, tmp_path):
             "No data is present, probably as a result of select on read",
         ),
         (
-            AssertionError,
+            ValueError,
             {"time_range": "foo"},
             "time_range must be a len-2 list of Julian Date floats",
         ),
         (
-            AssertionError,
+            ValueError,
             {"time_range": [1, 2, 3]},
             "time_range must be a len-2 list of Julian Date floats",
         ),
         (
-            AssertionError,
+            ValueError,
             {"time_range": ["foo", "bar"]},
             "time_range must be a len-2 list of Julian Date floats",
         ),
@@ -1115,7 +1115,7 @@ def test_read_write_read_miriad_partial_ant_str(uv_in_paper, tmp_path):
             {"time_range": [10.1, 10.2]},
             "No data is present, probably as a result of select on read",
         ),
-        (AssertionError, {"ant_str": 0}, "ant_str must be fed as a string"),
+        (ValueError, {"ant_str": 0}, "ant_str must be a string"),
     ],
 )
 def test_read_write_read_miriad_partial_errors(
@@ -1127,9 +1127,8 @@ def test_read_write_read_miriad_partial_errors(
     full.write_miriad(write_file, clobber=True)
     uv_in = UVData()
 
-    with pytest.raises(err_type) as cm:
+    with pytest.raises(err_type, match=err_msg):
         uv_in.read(write_file, **select_kwargs)
-    assert str(cm.value).startswith(err_msg)
 
 
 @pytest.mark.filterwarnings("ignore:The uvw_array does not match the expected values")
