@@ -151,7 +151,7 @@ cpdef int hwrite_init(int item_hdl, str type) except +:
 cdef int FIRSTINT(char s[4]):
   return (<int *>s)[0]
 
-cpdef hread_init(int item_hdl) except +:
+cpdef hread_init(int item_hdl) except +*:
   cdef int offset, iostat, code
   cdef char s[ITEM_HDR_SIZE]
 
@@ -191,7 +191,7 @@ cpdef hread_init(int item_hdl) except +:
   else:
     raise RuntimeError("unknown item type.")
 
-cpdef int hwrite(int item_hdl, int offset, val, str type) except +:
+cpdef int hwrite(int item_hdl, int offset, val, str type) except *:
   cdef int iostat
   cdef int int_1
   cdef long lg
@@ -451,7 +451,7 @@ cdef class UV:
 
     return (uvw, preamble[3], (i, j)), data, flags, nread
 
-  cpdef void raw_write(self, object input_preamble, numpy.ndarray[dtype=DTYPE_c, ndim=1] data, numpy.ndarray[dtype=int, ndim=1] flags):
+  cpdef void raw_write(self, object input_preamble, numpy.ndarray[dtype=DTYPE_c, ndim=1] data, numpy.ndarray[dtype=int, ndim=1] flags) except +:
     cdef int nread
     cdef double preamble[PREAMBLE_SIZE]
     cdef double t = input_preamble[1]
@@ -478,7 +478,7 @@ cdef class UV:
     uvtrack_c(self.tno, name.encode(), switches.encode())
     return
 
-  cpdef _rdvr(self, str name, str type) except +:
+  cpdef _rdvr(self, str name, str type) except +*:
     cdef char value[MAXVAR]
     cdef int length, updated, elem_size
 
@@ -520,7 +520,7 @@ cdef class UV:
 
     return
 
-  cpdef _wrvr(self, str name, str type, value) except +:
+  cpdef _wrvr(self, str name, str type, value) except +*:
     cdef char c_value[MAXVAR]
     cdef char *st
     if isinstance(value, np.ndarray):
@@ -568,7 +568,7 @@ cdef class UV:
 
     return
 
-  cpdef int haccess(self, str name, str mode) except +:
+  cpdef int haccess(self, str name, str mode) except *:
     cdef int item_hdl, iostat
     haccess_c(self.tno, &item_hdl, name.encode(), mode.encode(), &iostat)
     CHK_IO(iostat)
