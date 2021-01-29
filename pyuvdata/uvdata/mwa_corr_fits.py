@@ -6,6 +6,7 @@
 import warnings
 import itertools
 import numpy as np
+import h5py
 
 from astropy.io import fits
 from astropy.time import Time
@@ -243,21 +244,26 @@ def van_vleck_crosses_cheby(
     cheby_approx : bool
         Flag to warn if chebyshev approximation is being used.
     """
-    kap = np.empty(broad_inds.shape, dtype=np.complex128)
-    kap[broad_inds] = (
-        _corr_fits.van_vleck_cheby(
-            khat[broad_inds], rho_coeff, sv_inds_right1, sv_inds_right2, ds1, ds2
-        )
-        * sig1[broad_inds]
-        * sig2[broad_inds]
+    kap = np.zeros((2, len(khat[broad_inds])), dtype=np.float64)
+    _corr_fits.van_vleck_cheby(
+        kap,
+        np.array([khat.real[broad_inds], khat.imag[broad_inds]]),
+        rho_coeff,
+        sv_inds_right1,
+        sv_inds_right2,
+        ds1,
+        ds2,
     )
-    kap[~broad_inds] = van_vleck_crosses_int(
+    khat[broad_inds] = (kap[0, :] + 1j * kap[1, :]) * (
+        sig1[broad_inds] * sig2[broad_inds]
+    )
+    khat[~broad_inds] = van_vleck_crosses_int(
         khat.real[~broad_inds], sig1[~broad_inds], sig2[~broad_inds], cheby_approx
     ) + 1j * van_vleck_crosses_int(
         khat.imag[~broad_inds], sig1[~broad_inds], sig2[~broad_inds], cheby_approx
     )
 
-    return kap
+    return khat
 
 
 class MWACorrFITS(UVData):
@@ -460,6 +466,7 @@ class MWACorrFITS(UVData):
         """
         history_add_string = " Applied Van Vleck correction."
         # need data array to have 64 bit precision
+        # work on this in the future to only change precision where necessary
         if self.data_array.dtype != np.complex128:
             self.data_array = self.data_array.astype(np.complex128)
         # scale the data
@@ -548,11 +555,10 @@ class MWACorrFITS(UVData):
         if cheby_approx:
             history_add_string += " Used Van Vleck Chebychev approximation."
             # load in interpolation files
-            with open(DATA_PATH + "/mwa_config_data/Chebychev_coeff.npy", "rb") as f:
-                rho_coeff = np.load(f)
-            with open(DATA_PATH + "/mwa_config_data/sigma1.npy", "rb") as f:
-                sig_vec = np.load(f)
-            rho_coeff = rho_coeff[:, :, np.array([1, 3, 5])]
+            with h5py.File(DATA_PATH + "/mwa_config_data/Chebychev_coeff.h5", "r") as f:
+                rho_coeff = f["rho_data"][:]
+            with h5py.File(DATA_PATH + "/mwa_config_data/sigma1.h5", "r") as f:
+                sig_vec = f["sig_data"][:]
             sigs = self.data_array.real[autos[:, np.newaxis], :, pols]
             # find sigmas within interpolation range
             in_inds = np.logical_and(sigs > 0.9, sigs <= 4.5)

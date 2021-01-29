@@ -232,16 +232,17 @@ cpdef get_khat(rho, sig1, sig2):
 
 @cython.wraparound(False)
 @cython.boundscheck(False)
+# this function could be reworked to output a C array
 cdef numpy.ndarray[ndim=2, dtype=numpy.float64_t[:, ::1]] _get_cheby_coeff(
-    numpy.ndarray[ndim=3, dtype=numpy.float64_t] rho_coeff,
-    numpy.ndarray[ndim=1, dtype=numpy.int64_t] sv_inds_right1,
-    numpy.ndarray[ndim=1, dtype=numpy.int64_t] sv_inds_right2,
-    numpy.ndarray[ndim=1, dtype=numpy.float64_t] ds1,
-    numpy.ndarray[ndim=1, dtype=numpy.float64_t] ds2
+    numpy.float64_t[:, :, ::1] rho_coeff,
+    numpy.int64_t[::1] sv_inds_right1,
+    numpy.int64_t[::1] sv_inds_right2,
+    numpy.float64_t[::1] ds1,
+    numpy.float64_t[::1] ds2
 ):
   cdef int i
   cdef int j
-  cdef int n = len(ds1)
+  cdef int n = ds1.shape[0]
   cdef numpy.ndarray[ndim=2, dtype=numpy.float64_t] t = np.zeros((n, 3), dtype=np.float64)
 
   for i in cython.parallel.prange(n, nogil=True):
@@ -258,30 +259,31 @@ cdef numpy.ndarray[ndim=2, dtype=numpy.float64_t[:, ::1]] _get_cheby_coeff(
 
 @cython.boundscheck(False)
 @cython.wraparound(False)
-cpdef numpy.ndarray[ndim=1, dtype=numpy.complex128_t[::1]] van_vleck_cheby(
-    numpy.ndarray[ndim=1, dtype=numpy.complex128_t] khat,
-    numpy.ndarray[ndim=3, dtype=numpy.float64_t] rho_coeff,
-    numpy.ndarray[ndim=1, dtype=numpy.int64_t] sv_inds_right1,
-    numpy.ndarray[ndim=1, dtype=numpy.int64_t] sv_inds_right2,
-    numpy.ndarray[ndim=1, dtype=numpy.float64_t] ds1,
-    numpy.ndarray[ndim=1, dtype=numpy.float64_t] ds2
+cpdef void van_vleck_cheby(
+    numpy.float64_t[:, ::1] kap,
+    numpy.float64_t[:, ::1] k,
+    numpy.float64_t[:, :, ::1] rho_coeff,
+    numpy.int64_t[::1] sv_inds_right1,
+    numpy.int64_t[::1] sv_inds_right2,
+    numpy.float64_t[::1] ds1,
+    numpy.float64_t[::1] ds2
 ):
 
   cdef numpy.float64_t[:, ::1] t = _get_cheby_coeff(rho_coeff, sv_inds_right1, sv_inds_right2, ds1, ds2)
-  cdef numpy.float64_t[:, ::1] k = np.array([khat.real, khat.imag])
   cdef int n = k.shape[1]
   cdef int i
   cdef int j
-  cdef numpy.ndarray[ndim=1, dtype=numpy.complex128_t] rho = np.zeros((n), dtype=np.complex128)
 
   for i in cython.parallel.prange(n, nogil=True):
-        rho[i] = (
-            k[0, i] * (t[i, 0] - 3 * t[i, 1] + 5 * t[i, 2])
-            + k[0, i] ** 3 * (4 * t[i, 1] - 20 * t[i, 2])
-            + k[0, i] ** 5 * (16 * t[i, 2]) + 1j * (
-            k[1, i] * (t[i, 0] - 3 * t[i, 1] + 5 * t[i, 2])
-            + k[1, i] ** 3 * (4 * t[i, 1] - 20 * t[i, 2])
-            + k[1, i] ** 5 * (16 * t[i, 2]))
-        )
+    kap[0, i] = (
+      k[0, i] * (t[i, 0] - 3 * t[i, 1] + 5 * t[i, 2])
+      + k[0, i] ** 3 * (4 * t[i, 1] - 20 * t[i, 2])
+      + k[0, i] ** 5 * (16 * t[i, 2])
+    )
+    kap[1, i] = (
+      k[1, i] * (t[i, 0] - 3 * t[i, 1] + 5 * t[i, 2])
+      + k[1, i] ** 3 * (4 * t[i, 1] - 20 * t[i, 2])
+      + k[1, i] ** 5 * (16 * t[i, 2])
+    )
 
-  return rho
+  return
