@@ -221,7 +221,6 @@ cpdef hwrite(int item_hdl, int offset, val, str type) except +raise_miriad_error
 
   elif type[0] == "i":
     if not isinstance(val, (np.int, np.int_, np.intc)):
-      print(type(val))
       raise ValueError("expected an int")
     int_1 = <int>val
     hwritei_c(item_hdl, &int_1, offset, H_INT_SIZE, &iostat)
