@@ -104,19 +104,19 @@ cdef inline void CHK_IO(int i) except *:
   if (i != 0):
     raise IOError("IO failed.")
 
-cpdef hdaccess(int item_hdl) except +:
+cpdef void hdaccess(int item_hdl) except +:
   cdef int iostat
   hdaccess_c(item_hdl, &iostat)
   return
 
-cdef INIT(item_hdl, char type_item[4], size):
+cdef int INIT(int item_hdl, char type_item[4], int size):
   cdef int offset, iostat
   hwriteb_c(item_hdl, type_item, 0, ITEM_HDR_SIZE, &iostat)
   CHK_IO(iostat)
   offset = mroundup(ITEM_HDR_SIZE, size)
   return offset
 
-cpdef hwrite_init(int item_hdl, str type) except +:
+cpdef int hwrite_init(int item_hdl, str type) except +:
   cdef int offset
 
   if type[0] == "a":
@@ -148,10 +148,10 @@ cpdef hwrite_init(int item_hdl, str type) except +:
   return offset
 
 # hread_init surmises the type of a header item from the first few bytes
-cdef FIRSTINT(char s[4]):
+cdef int FIRSTINT(char s[4]):
   return (<int *>s)[0]
 
-cpdef hread_init(int item_hdl) except +:
+cpdef int hread_init(int item_hdl) except +:
   cdef int offset, iostat, code
   cdef char s[ITEM_HDR_SIZE]
 
@@ -191,7 +191,7 @@ cpdef hread_init(int item_hdl) except +:
   else:
     raise RuntimeError("unknown item type.")
 
-cpdef hwrite(int item_hdl, int offset, val, str type) except +:
+cpdef int hwrite(int item_hdl, int offset, val, str type) except +:
   cdef int iostat
   cdef int int_1
   cdef long lg
@@ -327,7 +327,7 @@ cdef class UV:
     self.tno = -1
     self.decimate = 1
     self.decphase = 0
-    self.intct = -1
+    self.intcnt = -1
     self.curtime = -1
 
     if corrmode[0] not in ["r", "j"]:
@@ -341,7 +341,7 @@ cdef class UV:
       self.tno = -1
       raise
 
-  cpdef close(self):
+  cpdef void close(self):
     if self.tno != -1:
       uvclose_c(self.tno)
 
@@ -352,67 +352,73 @@ cdef class UV:
     self.close()
     return
 
-  cdef _get_j_type(self, int htype, char *name, int length):
+  cdef numpy.ndarray[dtype=int, ndim=1] _get_j_type(self, int htype, char *name, int length):
     cdef numpy.ndarray[dtype=int, ndim=1] arr = np.zeros((length,), dtype=np.int16)
     uvgetvr_c(self.tno, htype, name, <char *>&arr[0], length)
     if length == 1:
       return arr.item(0)
     return arr
 
-  cdef _get_i_type(self, int htype, char *name, int length):
+  cdef numpy.ndarray[dtype=numpy.int32_t, ndim=1] _get_i_type(self, int htype, char *name, int length):
     cdef numpy.ndarray[dtype=numpy.int32_t, ndim=1] arr = np.zeros((length,), dtype=np.int32)
     uvgetvr_c(self.tno, htype, name, <char *>&arr[0], length)
     if length == 1:
       return arr.item(0)
     return arr
 
-  cdef _get_d_type(self, int htype, char *name, int length):
+  cdef numpy.ndarray[dtype=DTYPE_f64, ndim=1] _get_d_type(self, int htype, char *name, int length):
     cdef numpy.ndarray[dtype=DTYPE_f64, ndim=1] arr = np.zeros((length,), dtype=np.float64)
     uvgetvr_c(self.tno, htype, name, <char *>&arr[0], length)
     if length == 1:
       return arr.item(0)
     return arr
 
-  cdef _get_r_type(self, int htype, char *name, int length):
+  cdef numpy.ndarray[dtype=numpy.float32_t, ndim=1] _get_r_type(self, int htype, char *name, int length):
     cdef numpy.ndarray[dtype=numpy.float32_t, ndim=1] arr = np.zeros((length,), dtype=np.float32)
     uvgetvr_c(self.tno, htype, name, <char *>&arr[0], length)
     if length == 1:
       return arr.item(0)
     return arr
 
-  cdef _get_c_type(self, int htype, char *name, int length):
+  cdef numpy.ndarray[dtype=DTYPE_c, ndim=1] _get_c_type(self, int htype, char *name, int length):
     cdef numpy.ndarray[dtype=DTYPE_c, ndim=1] arr = np.zeros((length,), dtype=np.complex64)
     uvgetvr_c(self.tno, htype, name, <char *>&arr[0], length)
     if length == 1:
       return arr.item(0)
     return arr
 
-  cdef _store_j_type(self, int htype, char *name, numpy.ndarray[dtype=int] value):
+  @cython.boundscheck(False)
+  cdef void _store_j_type(self, int htype, char *name, numpy.ndarray[dtype=int] value):
     uvputvr_c(self.tno, htype, name, <char *>&value[0], value.size)
     return
 
-  cdef _store_i_type(self, int htype, char *name, numpy.ndarray[dtype=numpy.int32_t] value):
+  @cython.boundscheck(False)
+  cdef void _store_i_type(self, int htype, char *name, numpy.ndarray[dtype=numpy.int32_t] value):
     uvputvr_c(self.tno, htype, name, <char *>&value[0], value.size)
     return
 
-  cdef _store_d_type(self, int htype, char *name, numpy.ndarray[dtype=DTYPE_f64] value):
+  @cython.boundscheck(False)
+  cdef void _store_d_type(self, int htype, char *name, numpy.ndarray[dtype=DTYPE_f64] value):
     uvputvr_c(self.tno, htype, name, <char *>&value[0], value.size)
     return
 
-  cdef _store_r_type(self, int htype, char *name, numpy.ndarray[dtype=numpy.float32_t] value):
+  @cython.boundscheck(False)
+  cdef void _store_r_type(self, int htype, char *name, numpy.ndarray[dtype=numpy.float32_t] value):
     uvputvr_c(self.tno, htype, name, <char *>&value[0], value.size)
     return
 
-  cdef _store_c_type(self, int htype, char *name, numpy.ndarray[dtype=DTYPE_c] value):
+  @cython.boundscheck(False)
+  cdef void _store_c_type(self, int htype, char *name, numpy.ndarray[dtype=DTYPE_c] value):
     uvputvr_c(self.tno, htype, name, <char *>&value[0], value.size)
     return
 
-  cpdef rewind(self):
+  cpdef void rewind(self):
     uvrewind_c(self.tno)
     self.intcnt = -1
     self.curtime = -1
     return
 
+  @cython.boundscheck(False)
   cpdef raw_read(self, int n2read) except +:
     cdef int nread, i, j
     cdef double preamble[PREAMBLE_SIZE]
@@ -440,7 +446,7 @@ cdef class UV:
 
     return (uvw, preamble[3], (i, j)), data, flags, nread
 
-  cpdef raw_write(self, object input_preamble, numpy.ndarray[dtype=DTYPE_c, ndim=1] data, numpy.ndarray[dtype=int, ndim=1] flags):
+  cpdef void raw_write(self, object input_preamble, numpy.ndarray[dtype=DTYPE_c, ndim=1] data, numpy.ndarray[dtype=int, ndim=1] flags):
     cdef int nread
     cdef double preamble[PREAMBLE_SIZE]
     cdef double t = input_preamble[1]
@@ -459,11 +465,11 @@ cdef class UV:
 
     return
 
-  cpdef copyvr(self, UV uv):
+  cpdef void copyvr(self, UV uv):
     uvcopyvr_c(uv.tno, self.tno)
     return
 
-  cpdef trackvr(self, str name, str switches):
+  cpdef void trackvr(self, str name, str switches):
     uvtrack_c(self.tno, name.encode(), switches.encode())
     return
 
@@ -547,7 +553,7 @@ cdef class UV:
 
     return
 
-  cpdef _select(self, str name, numpy.float64_t ind1, numpy.float64_t ind2, int include_flag) except +:
+  cpdef void _select(self, str name, numpy.float64_t ind1, numpy.float64_t ind2, int include_flag) except +:
     # we used to only call strncmp(name, decimation, 5) so only look at first 5 letters
     if strcmp(name[:5].encode(), "decimation"[:5]) == 0:
       self.decimate = <long> ind1
@@ -557,7 +563,7 @@ cdef class UV:
 
     return
 
-  cpdef haccess(self, str name, str mode) except +:
+  cpdef int haccess(self, str name, str mode) except +:
     cdef int item_hdl, iostat
     haccess_c(self.tno, &item_hdl, name.encode(), mode.encode(), &iostat)
     CHK_IO(iostat)
