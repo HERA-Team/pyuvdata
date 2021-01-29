@@ -90,7 +90,6 @@ MAXCHAN = _MAXCHAN
 ctypedef numpy.int_t DTYPE_t
 ctypedef numpy.complex64_t DTYPE_c
 ctypedef numpy.float64_t DTYPE_f64
-ctypedef numpy.int64_t DTYPE_sl
 
 cdef inline int GETI(int bl):
   return (bl - 65536) // 2048 - 1 if bl > 65536 else (bl >> 8) - 1
