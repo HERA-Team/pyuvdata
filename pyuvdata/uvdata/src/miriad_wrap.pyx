@@ -11,7 +11,8 @@ cimport numpy
 cimport libcpp.complex
 from libc.string cimport strcmp
 
-DEF PREAMBLE_SIZE=5
+DEF PREAMBLE_SIZE = 5
+DEF MAXVAR = 32768
 
 cdef extern from "miriad.h":
   cdef int H_BYTE  "H_BYTE"
@@ -88,7 +89,6 @@ cdef extern from "maxdimc.h":
 
 MAXCHAN = _MAXCHAN
 
-cdef numpy.int_t MAXVAR = 32768
 ctypedef numpy.int_t DTYPE_t
 ctypedef numpy.complex64_t DTYPE_c
 ctypedef numpy.float64_t DTYPE_f64
