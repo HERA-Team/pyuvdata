@@ -276,12 +276,7 @@ def van_vleck_crosses_cheby(
     """
     kap = np.array([khat[broad_inds].real, khat[broad_inds].imag])
     _corr_fits.van_vleck_cheby(
-        kap,
-        rho_coeff,
-        sv_inds_right1,
-        sv_inds_right2,
-        ds1,
-        ds2,
+        kap, rho_coeff, sv_inds_right1, sv_inds_right2, ds1, ds2,
     )
     khat[broad_inds] = (kap[0, :] + 1j * kap[1, :]) * (
         sig1[broad_inds] * sig2[broad_inds]
@@ -492,7 +487,7 @@ class MWACorrFITS(UVData):
             approximation.
         data_array_dtype : numpy dtype
             Datatype to store the output data_array as.
-            
+
         Returns
         -------
         flagged_ants : numpy array of type int

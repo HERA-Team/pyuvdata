@@ -243,9 +243,9 @@ cdef numpy.ndarray[ndim=2, dtype=numpy.float64_t[:, ::1]] _get_cheby_coeff(
 ):
   """
   Perform a bilinear interpolation to get Chebyshev coefficients.
-  
+
   Explicitly assumes the grid spacing is 0.01.
-  
+
   Parameters
   ----------
   rho_coeff : numpy array of type float64_t
