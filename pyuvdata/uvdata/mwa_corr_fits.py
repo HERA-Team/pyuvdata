@@ -47,6 +47,11 @@ def sighat_vector(x):
     ----------
     x : numpy array
         Array of sigma inputs.
+
+    Returns
+    -------
+    sighat : numpy array
+        Array of corresponding sigmas of quantized values.
     """
     yy = np.arange(7)[:, np.newaxis]
     z = (2 * yy + 1) * erf((yy + 0.5) / (x * np.sqrt(2)))
@@ -63,6 +68,11 @@ def sighat_vector_prime(x):
     ----------
     x : numpy array
         Array of sigma inputs.
+
+    Returns
+    -------
+    sighat : numpy array
+        Array of corresponding derivatives with respect to sigma inputs.
     """
     yy = np.arange(7)[:, np.newaxis]
     z = (
@@ -93,6 +103,11 @@ def corrcorrect_simps(rho, sig1, sig2):
         Array of sigma inputs corresponding to antenna 1.
     sig2: numpy array
         Array of sigma inputs corresponding to antenna 2.
+
+    Returns
+    -------
+    integrated_khat : numpy array
+        Array of cross-correlations of quantized values.
     """
     x = np.linspace(0, rho, 11, dtype=np.float64)
     khat = np.zeros((11, rho.size), dtype=np.float64)
@@ -130,6 +145,11 @@ def van_vleck_autos(sighat_arr):
     ----------
     sighat_arr : numpy array
         Array of quantized sigma to be corrected.
+
+    Returns
+    -------
+    sighat_arr : numpy array
+        Array of Van Vleck corrected scaled auto-correlations.
     """
     # cut off small sigmas that will not converge
     cutoff_inds = np.where(sighat_arr > 0.5)[0]
@@ -167,6 +187,11 @@ def van_vleck_crosses_int(k_arr, sig1_arr, sig2_arr, cheby_approx):
         Array of sigma inputs corresponding to antenna 2.
     cheby_approx : bool
         Flag to warn if chebyshev approximation is being used.
+
+    Returns
+    -------
+    k_arr : numpy array
+        Array of Van Vleck corrected scaled cross-correlations.
     """
     nonzero_inds = np.where((k_arr != 0) & (sig1_arr != 0) & (sig2_arr != 0))[0]
     if len(nonzero_inds) > 0.0:
@@ -243,11 +268,15 @@ def van_vleck_crosses_cheby(
         Distance between sig2 and right-indexed value for bilinear interpolation.
     cheby_approx : bool
         Flag to warn if chebyshev approximation is being used.
+
+    Returns
+    -------
+    khat : numpy array
+        Array of Van Vleck corrected scaled cross-correlations.
     """
-    kap = np.zeros((2, len(khat[broad_inds])), dtype=np.float64)
+    kap = np.array([khat[broad_inds].real, khat[broad_inds].imag])
     _corr_fits.van_vleck_cheby(
         kap,
-        np.array([khat.real[broad_inds], khat.imag[broad_inds]]),
         rho_coeff,
         sv_inds_right1,
         sv_inds_right2,
@@ -463,6 +492,11 @@ class MWACorrFITS(UVData):
             approximation.
         data_array_dtype : numpy dtype
             Datatype to store the output data_array as.
+            
+        Returns
+        -------
+        flagged_ants : numpy array of type int
+            Updated list of indices of flagged antennas
         """
         history_add_string = " Applied Van Vleck correction."
         # need data array to have 64 bit precision

@@ -171,8 +171,8 @@ cpdef numpy.ndarray[ndim=1, dtype=numpy.float64_t] get_cable_len_diffs(
 @cython.cdivision(True)
 cdef numpy.ndarray[ndim=2, dtype=numpy.float64_t] _compute_khat(
   numpy.float64_t[:, ::1] x,
-  numpy.ndarray[ndim=1, dtype=numpy.float64_t] sig1,
-  numpy.ndarray[ndim=1, dtype=numpy.float64_t] sig2,
+  numpy.float64_t[::1] sig1,
+  numpy.float64_t[::1] sig2,
 ):
 
   cdef numpy.ndarray[ndim=2, dtype=numpy.float64_t] khat = np.zeros((x.shape[0], x.shape[1]), dtype=np.float64)
@@ -230,29 +230,57 @@ cpdef get_khat(rho, sig1, sig2):
       khat = khat.squeeze()
     return khat
 
+
 @cython.wraparound(False)
 @cython.boundscheck(False)
-# this function could be reworked to output a C array
+# this function could be reworked to return a C array
 cdef numpy.ndarray[ndim=2, dtype=numpy.float64_t[:, ::1]] _get_cheby_coeff(
-    numpy.float64_t[:, :, ::1] rho_coeff,
-    numpy.int64_t[::1] sv_inds_right1,
-    numpy.int64_t[::1] sv_inds_right2,
-    numpy.float64_t[::1] ds1,
-    numpy.float64_t[::1] ds2
+  numpy.float64_t[:, :, ::1] rho_coeff,
+  numpy.int64_t[::1] sv_inds_right1,
+  numpy.int64_t[::1] sv_inds_right2,
+  numpy.float64_t[::1] ds1,
+  numpy.float64_t[::1] ds2
 ):
+  """
+  Perform a bilinear interpolation to get Chebyshev coefficients.
+  
+  Explicitly assumes the grid spacing is 0.01.
+  
+  Parameters
+  ----------
+  rho_coeff : numpy array of type float64_t
+    Array of Chebyeshev coefficients to interpolate over.
+  sv_inds_right1 : numpy array of type int64_t
+    Array of right indices nearest to sigmas for antenna 1.
+  sv_inds_right2 : numpy array of type int64_t
+    Array of right indices nearest to sigmas for antenna 2.
+  ds1 : numpy array of type float64_t
+    Array of differences between sigmas for antenna 1 and nearest sigmas at
+    sv_inds_right_1.
+  ds1 : numpy array of type float64_t
+    Array of differences between sigmas for antenna 2 and nearest sigmas at
+    sv_inds_right_2.
+
+  Returns
+  -------
+  t : numpy array of type float64_t
+    Array of coefficients for the first three odd Chebyshev polynomials for each
+    pair of sigmas.
+
+  """
   cdef int i
   cdef int j
   cdef int n = ds1.shape[0]
   cdef numpy.ndarray[ndim=2, dtype=numpy.float64_t] t = np.zeros((n, 3), dtype=np.float64)
 
   for i in cython.parallel.prange(n, nogil=True):
-      for j in range(3):
-          t[i, j] = 1e4 * (
-              rho_coeff[(sv_inds_right1[i] - 1), (sv_inds_right2[i] - 1), j] * ds1[i] * ds2[i]
-              + rho_coeff[(sv_inds_right1[i] - 1), sv_inds_right2[i], j] * ds1[i] * (0.01 - ds2[i])
-              + rho_coeff[sv_inds_right1[i], (sv_inds_right2[i] - 1), j] * (0.01 - ds1[i]) * ds2[i]
-              + rho_coeff[sv_inds_right1[i], sv_inds_right2[i], j] * (0.01 - ds1[i]) * (0.01 - ds2[i])
-          )
+    for j in range(3):
+      t[i, j] = 1e4 * (
+        rho_coeff[(sv_inds_right1[i] - 1), (sv_inds_right2[i] - 1), j] * ds1[i] * ds2[i]
+        + rho_coeff[(sv_inds_right1[i] - 1), sv_inds_right2[i], j] * ds1[i] * (0.01 - ds2[i])
+        + rho_coeff[sv_inds_right1[i], (sv_inds_right2[i] - 1), j] * (0.01 - ds1[i]) * ds2[i]
+        + rho_coeff[sv_inds_right1[i], sv_inds_right2[i], j] * (0.01 - ds1[i]) * (0.01 - ds2[i])
+      )
 
   return t
 
@@ -260,30 +288,51 @@ cdef numpy.ndarray[ndim=2, dtype=numpy.float64_t[:, ::1]] _get_cheby_coeff(
 @cython.boundscheck(False)
 @cython.wraparound(False)
 cpdef void van_vleck_cheby(
-    numpy.float64_t[:, ::1] kap,
-    numpy.float64_t[:, ::1] k,
-    numpy.float64_t[:, :, ::1] rho_coeff,
-    numpy.int64_t[::1] sv_inds_right1,
-    numpy.int64_t[::1] sv_inds_right2,
-    numpy.float64_t[::1] ds1,
-    numpy.float64_t[::1] ds2
+  numpy.float64_t[:, ::1] kap,
+  numpy.float64_t[:, :, ::1] rho_coeff,
+  numpy.int64_t[::1] sv_inds_right1,
+  numpy.int64_t[::1] sv_inds_right2,
+  numpy.float64_t[::1] ds1,
+  numpy.float64_t[::1] ds2
 ):
+  """
+  Compute Van Vleck corrected cross-correlations using Chebyshev polynomials.
 
+  This function operates on input `kap` array inplace.
+
+  Parameters
+  ----------
+  kap : numpy array of type float64_t
+    Array of values to correct.
+  rho_coeff : numpy array of type float64_t
+    Array of Chebyeshev coefficients to interpolate over.
+  sv_inds_right1 : numpy array of type int64_t
+    Array of right indices nearest to sigmas for antenna 1.
+  sv_inds_right2 : numpy array of type int64_t
+    Array of right indices nearest to sigmas for antenna 2.
+  ds1 : numpy array of type float64_t
+    Array of differences between sigmas for antenna 1 and nearest sigmas at
+    sv_inds_right_1.
+  ds1 : numpy array of type float64_t
+    Array of differences between sigmas for antenna 2 and nearest sigmas at
+    sv_inds_right_2.
+
+  """
   cdef numpy.float64_t[:, ::1] t = _get_cheby_coeff(rho_coeff, sv_inds_right1, sv_inds_right2, ds1, ds2)
-  cdef int n = k.shape[1]
+  cdef int n = kap.shape[1]
   cdef int i
   cdef int j
 
   for i in cython.parallel.prange(n, nogil=True):
     kap[0, i] = (
-      k[0, i] * (t[i, 0] - 3 * t[i, 1] + 5 * t[i, 2])
-      + k[0, i] ** 3 * (4 * t[i, 1] - 20 * t[i, 2])
-      + k[0, i] ** 5 * (16 * t[i, 2])
+      kap[0, i] * (t[i, 0] - 3 * t[i, 1] + 5 * t[i, 2])
+      + kap[0, i] ** 3 * (4 * t[i, 1] - 20 * t[i, 2])
+      + kap[0, i] ** 5 * (16 * t[i, 2])
     )
     kap[1, i] = (
-      k[1, i] * (t[i, 0] - 3 * t[i, 1] + 5 * t[i, 2])
-      + k[1, i] ** 3 * (4 * t[i, 1] - 20 * t[i, 2])
-      + k[1, i] ** 5 * (16 * t[i, 2])
+      kap[1, i] * (t[i, 0] - 3 * t[i, 1] + 5 * t[i, 2])
+      + kap[1, i] ** 3 * (4 * t[i, 1] - 20 * t[i, 2])
+      + kap[1, i] ** 5 * (16 * t[i, 2])
     )
 
   return
